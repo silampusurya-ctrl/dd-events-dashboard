@@ -117,7 +117,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('sw.js').catch((err) => {
+
+    // Auto-reload once when a newer service worker takes control, so an
+    // installed/home-screen app picks up updates on its own instead of
+    // needing the user to manually uninstall and reinstall it.
+    let hasReloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hasReloaded) return;
+        hasReloaded = true;
+        window.location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js').then((registration) => {
+        // Force an immediate check for a newer sw.js instead of waiting for
+        // the browser's own update schedule - important for installed PWAs
+        // that get relaunched from a cached home-screen icon.
+        registration.update();
+    }).catch((err) => {
         console.error('Service worker registration failed', err);
     });
 }
