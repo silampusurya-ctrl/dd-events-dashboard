@@ -105,6 +105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('setup-password-form').addEventListener('submit', handleSetupPassword);
     document.getElementById('login-password-form').addEventListener('submit', handleLoginPassword);
     document.getElementById('staff-login-form').addEventListener('submit', handleStaffLogin);
+    document.getElementById('setup-staff-login-form').addEventListener('submit', handleSetupStaffLogin);
     document.getElementById('create-account-form').addEventListener('submit', handleCreateAdminAccount);
 
     registerServiceWorker();
@@ -227,6 +228,7 @@ async function initAuth() {
         hideView('password-login-view');
         hideView('app-container');
         hideView('staff-app-container');
+        setSetupMode('admin');
     } else if (!isAuthenticated) {
         showView('auth-container');
         hideView('password-setup-view');
@@ -257,6 +259,24 @@ function setAuthMode(mode) {
         document.getElementById('login-password').focus();
     } else {
         document.getElementById('staff-login-password').focus();
+    }
+}
+
+// Same admin/staff toggle as setAuthMode(), but for the very first-run
+// screen (no admin account exists on this device yet) - so a staff member
+// opening the app on a brand-new phone can still reach the Staff Portal
+// without needing an admin account to exist locally first.
+function setSetupMode(mode) {
+    const isAdmin = mode === 'admin';
+    document.getElementById('setup-mode-admin-btn').classList.toggle('active', isAdmin);
+    document.getElementById('setup-mode-staff-btn').classList.toggle('active', !isAdmin);
+    document.getElementById('setup-admin-fields').classList.toggle('hidden', !isAdmin);
+    document.getElementById('setup-staff-fields').classList.toggle('hidden', isAdmin);
+
+    if (isAdmin) {
+        document.getElementById('setup-email').focus();
+    } else {
+        document.getElementById('setup-staff-login-password').focus();
     }
 }
 
@@ -310,28 +330,41 @@ async function handleCreateAdminAccount(e) {
     initAuth();
 }
 
-async function handleStaffLogin(e) {
-    e.preventDefault();
+// Shared by both staff-login forms (the toggle on the regular login screen,
+// and the toggle on the very first-run setup screen) since they're
+// functionally identical - just different input/error element IDs.
+async function attemptStaffLogin(passwordInputId, errorMsgId) {
     const storedHash = localStorage.getItem('dd_staff_password_hash');
+    const passwordInput = document.getElementById(passwordInputId);
 
     if (!storedHash) {
         showToast('Staff access has not been set up yet. Please contact your admin.');
         return;
     }
 
-    const entered = document.getElementById('staff-login-password').value;
+    const entered = passwordInput.value;
     const enteredHash = await sha256(entered);
 
     if (enteredHash === storedHash) {
         sessionStorage.setItem('dd_staff_authenticated', 'true');
-        hideView('staff-login-error-msg');
-        document.getElementById('staff-login-password').value = '';
+        hideView(errorMsgId);
+        passwordInput.value = '';
         initAuth();
     } else {
-        showView('staff-login-error-msg');
-        document.getElementById('staff-login-password').value = '';
-        document.getElementById('staff-login-password').focus();
+        showView(errorMsgId);
+        passwordInput.value = '';
+        passwordInput.focus();
     }
+}
+
+async function handleStaffLogin(e) {
+    e.preventDefault();
+    await attemptStaffLogin('staff-login-password', 'staff-login-error-msg');
+}
+
+async function handleSetupStaffLogin(e) {
+    e.preventDefault();
+    await attemptStaffLogin('setup-staff-login-password', 'setup-staff-login-error-msg');
 }
 
 async function setStaffPassword() {

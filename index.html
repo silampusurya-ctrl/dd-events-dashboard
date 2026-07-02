@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=9">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -49,23 +49,43 @@
         <div class="auth-card">
             <h1 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events</h1>
             <div id="password-setup-view" class="hidden">
-                <h2>Create Admin Account</h2>
-                <p>Welcome! Create your office login (email + password). You can add up to your whole office team as separate logins later from Settings.</p>
-                <form id="setup-password-form">
-                    <div class="form-group">
-                        <label for="setup-email">Your Email</label>
-                        <input type="email" id="setup-email" placeholder="e.g. you@ddevents.com" required autocomplete="email">
-                    </div>
-                    <div class="form-group">
-                        <label for="new-password">New Password</label>
-                        <input type="password" id="new-password" placeholder="Enter new password" required autocomplete="new-password">
-                    </div>
-                    <div class="form-group">
-                        <label for="confirm-password">Confirm Password</label>
-                        <input type="password" id="confirm-password" placeholder="Re-enter password" required autocomplete="new-password">
-                    </div>
-                    <button type="submit" class="btn primary-btn btn-block">Create Account</button>
-                </form>
+                <div class="auth-mode-toggle">
+                    <button type="button" class="auth-mode-btn active" id="setup-mode-admin-btn" onclick="setSetupMode('admin')">Office (Admin)</button>
+                    <button type="button" class="auth-mode-btn" id="setup-mode-staff-btn" onclick="setSetupMode('staff')">Staff</button>
+                </div>
+
+                <div id="setup-admin-fields">
+                    <h2>Create Admin Account</h2>
+                    <p>Welcome! Create your office login (email + password). You can add up to your whole office team as separate logins later from Settings.</p>
+                    <form id="setup-password-form">
+                        <div class="form-group">
+                            <label for="setup-email">Your Email</label>
+                            <input type="email" id="setup-email" placeholder="e.g. you@ddevents.com" required autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="new-password">New Password</label>
+                            <input type="password" id="new-password" placeholder="Enter new password" required autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="confirm-password">Confirm Password</label>
+                            <input type="password" id="confirm-password" placeholder="Re-enter password" required autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn primary-btn btn-block">Create Account</button>
+                    </form>
+                </div>
+
+                <div id="setup-staff-fields" class="hidden">
+                    <h2>Staff Work Portal</h2>
+                    <p>Enter the staff access password to update your work, location, date & time.</p>
+                    <form id="setup-staff-login-form">
+                        <div class="form-group">
+                            <label for="setup-staff-login-password">Staff Access Password</label>
+                            <input type="password" id="setup-staff-login-password" placeholder="Enter staff password" autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn primary-btn btn-block">Enter Staff Portal</button>
+                        <div id="setup-staff-login-error-msg" class="error-text hidden">Incorrect password. Please try again.</div>
+                    </form>
+                </div>
             </div>
 
             <div id="password-login-view" class="hidden">
@@ -1181,6 +1201,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>
