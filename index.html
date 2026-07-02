@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DD Events Dashboard</title>
+
+    <!-- PWA: installable app metadata -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#7B2CBF">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="DD Events">
+    <link rel="icon" href="icons/favicon.png" type="image/png">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+
+    <link rel="stylesheet" href="style.css?v=4">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- html2canvas for JPEG export/share of quotations & invoices -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+    <!-- Notification Alert Overlay -->
+    <div id="notification-toast" class="toast hidden">
+        <span id="toast-message">Notification message here</span>
+        <button onclick="closeToast()" class="toast-close-btn">&times;</button>
+    </div>
+
+    <!-- PWA Install Prompt Banner -->
+    <div id="install-app-banner" class="install-banner hidden">
+        <div class="install-banner-content">
+            <img src="icons/icon-96.png" alt="DD Events" class="install-banner-icon">
+            <div class="install-banner-text">
+                <strong>Install DD Events</strong>
+                <span>Add this app to your home screen for quick access.</span>
+            </div>
+        </div>
+        <div class="install-banner-actions">
+            <button onclick="dismissInstallBanner()" class="btn text-btn">Not now</button>
+            <button onclick="triggerAppInstall()" class="btn primary-btn"><i class="fa-solid fa-download"></i> Install</button>
+        </div>
+    </div>
+
+    <!-- Login / Password Management Screen -->
+    <div id="auth-container" class="auth-wrapper">
+        <div class="auth-card">
+            <h1 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events</h1>
+            <div id="password-setup-view" class="hidden">
+                <h2>Set Master Password</h2>
+                <p>Welcome! Create a secure password to protect your events dashboard data locally.</p>
+                <form id="setup-password-form">
+                    <div class="form-group">
+                        <label for="new-password">New Password</label>
+                        <input type="password" id="new-password" placeholder="Enter new password" required autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-password">Confirm Password</label>
+                        <input type="password" id="confirm-password" placeholder="Re-enter password" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn primary-btn btn-block">Set Password</button>
+                </form>
+            </div>
+            
+            <div id="password-login-view" class="hidden">
+                <div class="auth-mode-toggle">
+                    <button type="button" class="auth-mode-btn active" id="mode-admin-btn" onclick="setAuthMode('admin')">Office (Admin)</button>
+                    <button type="button" class="auth-mode-btn" id="mode-staff-btn" onclick="setAuthMode('staff')">Staff</button>
+                </div>
+
+                <div id="admin-login-fields">
+                    <h2>Access Dashboard</h2>
+                    <p>Enter your master password to unlock the application.</p>
+                    <form id="login-password-form">
+                        <div class="form-group">
+                            <label for="login-password">Master Password</label>
+                            <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn primary-btn btn-block">Unlock Dashboard</button>
+                        <div id="login-error-msg" class="error-text hidden">Incorrect password. Please try again.</div>
+                    </form>
+                </div>
+
+                <div id="staff-login-fields" class="hidden">
+                    <h2>Staff Work Portal</h2>
+                    <p>Enter the staff access password to update your work, location, date & time.</p>
+                    <form id="staff-login-form">
+                        <div class="form-group">
+                            <label for="staff-login-password">Staff Access Password</label>
+                            <input type="password" id="staff-login-password" placeholder="Enter staff password" autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn primary-btn btn-block">Enter Staff Portal</button>
+                        <div id="staff-login-error-msg" class="error-text hidden">Incorrect password. Please try again.</div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Staff Work Portal (separate, simplified, own password - hidden initially) -->
+    <div id="staff-app-container" class="staff-portal-wrapper hidden">
+        <div class="staff-portal-card">
+            <div class="staff-portal-header">
+                <h2 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events - Staff Work Log</h2>
+                <button onclick="staffLogout()" class="btn logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Exit</button>
+            </div>
+
+            <div class="form-group">
+                <label for="worklog-staff-select">Your Name</label>
+                <select id="worklog-staff-select" class="form-control-large" onchange="onWorklogStaffChange()">
+                    <option value="">-- Select your name --</option>
+                </select>
+            </div>
+
+            <h3><i class="fa-solid fa-calendar-check"></i> Booked Events - Apply to Work</h3>
+            <p class="stage-desc">These events have their date booked (advance received). Apply to let admin know you're available - admin will approve who works on it, and you'll see the confirmation here.</p>
+            <div id="staff-available-events" class="pipeline-cards-grid" style="margin-bottom: 24px;">
+                <!-- Dynamic booked-event cards -->
+            </div>
+
+            <form id="worklog-form" class="form-compact" onsubmit="event.preventDefault(); submitWorkLog();">
+                <div class="form-row-two">
+                    <div class="form-group">
+                        <label for="worklog-date">Date</label>
+                        <input type="date" id="worklog-date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="worklog-time">Time</label>
+                        <input type="time" id="worklog-time" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="worklog-location">Where (Location / Venue)</label>
+                    <input type="text" id="worklog-location" placeholder="e.g. DD Function Hall, Kalayarkovil" required>
+                </div>
+                <div class="form-group">
+                    <label for="worklog-work">What Work</label>
+                    <textarea id="worklog-work" rows="3" placeholder="Describe the work done / task..." required></textarea>
+                </div>
+                <button type="submit" class="btn primary-btn btn-block"><i class="fa-solid fa-plus"></i> Submit Work Update</button>
+            </form>
+
+            <h3 style="margin-top: 24px;">My Recent Work Updates</h3>
+            <div class="table-responsive">
+                <table class="simple-table">
+                    <thead>
+                        <tr><th>Date</th><th>Time</th><th>Where</th><th>What Work</th></tr>
+                    </thead>
+                    <tbody id="worklog-my-list-tbody">
+                        <!-- Dynamic rows -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard Application Layout (Hidden initially) -->
+    <div id="app-container" class="app-layout hidden">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events</h2>
+            </div>
+            <nav class="sidebar-menu">
+                <a href="#dashboard" class="menu-item active" onclick="switchTab('dashboard')">
+                    <i class="fa-solid fa-chart-line"></i> Dashboard
+                </a>
+                <div class="menu-section-label">Pipeline</div>
+                <a href="#stage-enquiry" class="menu-item" onclick="switchTab('stage-enquiry')">
+                    <i class="fa-solid fa-inbox"></i> Enquiry
+                </a>
+                <a href="#stage-quotation" class="menu-item" onclick="switchTab('stage-quotation')">
+                    <i class="fa-solid fa-file-signature"></i> Quotation
+                </a>
+                <a href="#stage-advance-paid" class="menu-item" onclick="switchTab('stage-advance-paid')">
+                    <i class="fa-solid fa-hand-holding-dollar"></i> Advance Pay / Date Booked
+                </a>
+                <a href="#stage-event-completed" class="menu-item" onclick="switchTab('stage-event-completed')">
+                    <i class="fa-solid fa-calendar-check"></i> Event Completed
+                </a>
+                <a href="#stage-pending-bill" class="menu-item" onclick="switchTab('stage-pending-bill')">
+                    <i class="fa-solid fa-hourglass-half"></i> Pending Bill
+                </a>
+                <a href="#stage-completed-bill" class="menu-item" onclick="switchTab('stage-completed-bill')">
+                    <i class="fa-solid fa-circle-check"></i> Completed Bill
+                </a>
+                <a href="#stage-delivered" class="menu-item" onclick="switchTab('stage-delivered')">
+                    <i class="fa-solid fa-box-open"></i> Delivered
+                </a>
+                <a href="#events" class="menu-item" onclick="switchTab('events')">
+                    <i class="fa-solid fa-calendar-check"></i> Events & Inquiries
+                </a>
+                <a href="#quotation" class="menu-item" onclick="switchTab('quotation')">
+                    <i class="fa-solid fa-file-signature"></i> Quotations
+                </a>
+                <a href="#billing" class="menu-item" onclick="switchTab('billing')">
+                    <i class="fa-solid fa-file-invoice-dollar"></i> Billing & Invoices
+                </a>
+                <a href="#staff" class="menu-item" onclick="switchTab('staff')">
+                    <i class="fa-solid fa-users"></i> Staff Attendance
+                </a>
+                <a href="#worklogs" class="menu-item" onclick="switchTab('worklogs')">
+                    <i class="fa-solid fa-list-check"></i> Staff Work Logs
+                </a>
+                <a href="#event-approvals" class="menu-item" onclick="switchTab('event-approvals')">
+                    <i class="fa-solid fa-user-check"></i> Event Staff Approvals
+                </a>
+                <a href="#customers" class="menu-item" onclick="switchTab('customers')">
+                    <i class="fa-solid fa-address-book"></i> Customers
+                </a>
+                <a href="#settings" class="menu-item" onclick="switchTab('settings')">
+                    <i class="fa-solid fa-gears"></i> Settings
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button onclick="logout()" class="btn logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Lock App</button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-left">
+                    <h1 id="current-tab-title">Dashboard</h1>
+                </div>
+                <div class="header-right">
+                    <!-- Notifications Dropdown Trigger -->
+                    <div class="notification-bell" onclick="toggleNotificationDropdown()">
+                        <i class="fa-solid fa-bell"></i>
+                        <span id="notification-count" class="badge hidden">0</span>
+                        <div id="notification-dropdown" class="dropdown-menu hidden">
+                            <div class="dropdown-header">Reminders & Notifications</div>
+                            <div id="notification-list" class="dropdown-list">
+                                <div class="empty-notifications">No urgent alerts.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="user-profile">
+                        <span class="user-avatar"><i class="fa-solid fa-user-tie"></i></span>
+                        <span class="user-name">Administrator</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Section -->
+            <section id="tab-dashboard" class="tab-content active">
+                <!-- Stats Overview Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon purple-bg"><i class="fa-solid fa-clipboard-list"></i></div>
+                        <div class="stat-details">
+                            <h3 id="stat-total-inquiries">0</h3>
+                            <p>Total Inquiries</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon yellow-bg"><i class="fa-solid fa-hourglass-half"></i></div>
+                        <div class="stat-details">
+                            <h3 id="stat-active-events">0</h3>
+                            <p>Active Events</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon red-bg"><i class="fa-solid fa-money-bill-wave"></i></div>
+                        <div class="stat-details">
+                            <h3 id="stat-pending-payments">₹0.00</h3>
+                            <p>Pending Payments</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green-bg"><i class="fa-solid fa-circle-check"></i></div>
+                        <div class="stat-details">
+                            <h3 id="stat-completed-events">0</h3>
+                            <p>Completed Events</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon lavender-bg"><i class="fa-solid fa-user-clock"></i></div>
+                        <div class="stat-details">
+                            <h3 id="stat-staff-present">0</h3>
+                            <p>Staff Present Today</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert Banners for 2-Day Reminders -->
+                <div id="urgent-reminders-container" class="reminders-panel hidden">
+                    <div class="panel-header">
+                        <h2><i class="fa-solid fa-circle-exclamation text-yellow"></i> 2-Day Event Reminders</h2>
+                    </div>
+                    <div id="urgent-reminders-list" class="reminders-list-grid">
+                        <!-- Dynamic items here -->
+                    </div>
+                </div>
+
+                <div class="dashboard-details">
+                    <div class="dashboard-card main-table-card">
+                        <div class="card-header">
+                            <h2>Upcoming Events</h2>
+                            <button onclick="switchTab('events')" class="btn link-btn">View All</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Customer</th>
+                                        <th>Service</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                        <th>Workflow Progress</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="upcoming-events-tbody">
+                                    <tr>
+                                        <td colspan="6" class="text-center">No upcoming events scheduled.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Enquiry -->
+            <section id="tab-stage-enquiry" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-inbox"></i> Enquiry Stage</h2>
+                        <span class="column-count" id="count-stage-enquiry">0</span>
+                    </div>
+                    <p class="stage-desc">New inquiries that have not been quoted yet. Click "Approve → Next Stage" on a card once it's ready to move forward.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-enquiry">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Quotation -->
+            <section id="tab-stage-quotation" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-file-signature"></i> Quotation Stage</h2>
+                        <span class="column-count" id="count-stage-quotation">0</span>
+                    </div>
+                    <p class="stage-desc">Quotation has been sent to the customer. Approve once the advance payment is received to move to the next stage.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-quotation">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Advance Pay / Date Booked -->
+            <section id="tab-stage-advance-paid" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-hand-holding-dollar"></i> Advance Pay / Date Booked Stage</h2>
+                        <span class="column-count" id="count-stage-advance-paid">0</span>
+                    </div>
+                    <p class="stage-desc">Advance received and the booking date is locked. Approve once the event has been held to move forward.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-advance-paid">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Event Completed -->
+            <section id="tab-stage-event-completed" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-calendar-check"></i> Event Completed Stage</h2>
+                        <span class="column-count" id="count-stage-event-completed">0</span>
+                    </div>
+                    <p class="stage-desc">Event has been held. Approve to move the entry into billing for the pending balance.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-event-completed">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Pending Bill -->
+            <section id="tab-stage-pending-bill" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-hourglass-half"></i> Pending Bill Stage</h2>
+                        <span class="column-count" id="count-stage-pending-bill">0</span>
+                    </div>
+                    <p class="stage-desc">Balance amount is still pending from the customer. Approve once the bill is fully settled.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-pending-bill">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Completed Bill -->
+            <section id="tab-stage-completed-bill" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-circle-check"></i> Completed Bill Stage</h2>
+                        <span class="column-count" id="count-stage-completed-bill">0</span>
+                    </div>
+                    <p class="stage-desc">Bill fully paid. Approve once the final output has been delivered to the customer.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-completed-bill">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline Stage Page: Delivered -->
+            <section id="tab-stage-delivered" class="tab-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h2><i class="fa-solid fa-box-open"></i> Delivered Stage</h2>
+                        <span class="column-count" id="count-stage-delivered">0</span>
+                    </div>
+                    <p class="stage-desc">Completed events whose final output has been delivered to the customer.</p>
+                    <div class="pipeline-cards-grid" id="cards-stage-delivered">
+                        <!-- Dynamic cards -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Events & Inquiries Section -->
+            <section id="tab-events" class="tab-content">
+                <div class="section-actions">
+                    <div class="search-bar">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="event-search" placeholder="Search customer, service..." oninput="filterEvents()">
+                    </div>
+                    <button class="btn primary-btn" onclick="openModal('add-event-modal')">
+                        <i class="fa-solid fa-plus"></i> New Event / Inquiry
+                    </button>
+                </div>
+
+                <div class="dashboard-card">
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Event Date</th>
+                                    <th>Customer</th>
+                                    <th>Service Type</th>
+                                    <th>Total Amount</th>
+                                    <th>Workflow Stage</th>
+                                    <th>Output Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="events-list-tbody">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quotation Tab -->
+            <section id="tab-quotation" class="tab-content">
+                <div class="billing-container">
+                    <!-- Left: Quotations List -->
+                    <div class="billing-sidebar-card">
+                        <div class="card-header">
+                            <h2>Quotations List</h2>
+                        </div>
+                        <div class="invoice-search-box">
+                            <input type="text" id="quotation-search" placeholder="Search quotation..." oninput="filterQuotations()">
+                        </div>
+                        <div class="invoices-list" id="quotations-list-container">
+                            <!-- Dynamic quotation items -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Quotation Viewer/Editor -->
+                    <div class="billing-main-panel">
+                        <div class="no-selection-panel" id="quotation-placeholder">
+                            <i class="fa-solid fa-file-signature placeholder-icon"></i>
+                            <h3>No Event Selected for Quotation</h3>
+                            <p>Select an event from the left panel, or trigger Quotation from the Events page.</p>
+                        </div>
+                        
+                        <div class="invoice-builder-panel hidden" id="quotation-editor">
+                            <div class="invoice-actions-header">
+                                <div>
+                                    <span class="badge badge-quotation" id="q-status-badge">QUOTATION</span>
+                                    <span class="inv-number" id="q-display-number">QTN-0000</span>
+                                </div>
+                                <div class="action-buttons">
+                                    <button class="btn secondary-btn" onclick="printQuotation()"><i class="fa-solid fa-print"></i> Print Quote</button>
+                                    <button class="btn secondary-btn" onclick="downloadQuotationJPEG()"><i class="fa-solid fa-file-image"></i> Download JPEG</button>
+                                    <button class="btn secondary-btn" onclick="shareQuotationJPEG()"><i class="fa-solid fa-share-nodes"></i> Share Image</button>
+                                    <button class="btn secondary-btn" onclick="shareQuotationWhatsApp()"><i class="fa-brands fa-whatsapp text-green"></i> Share WhatsApp</button>
+                                    <button class="btn primary-btn" onclick="saveQuotationChanges()"><i class="fa-solid fa-floppy-disk"></i> Save Quote</button>
+                                </div>
+                            </div>
+
+                            <!-- Quotation A4 paper sheet -->
+                            <div class="invoice-paper a4-sheet" id="quotation-print-area">
+                                <div class="invoice-header">
+                                    <div class="invoice-logo">
+                                        <h2>DD Events</h2>
+                                        <p class="logo-sub">(Events & Management)</p>
+                                        <p class="address-line">AL.AR. Street, Kalayarkovil</p>
+                                        <p class="call-lines">Call: 6374503310, 6384203310</p>
+                                    </div>
+                                    <div class="invoice-title">
+                                        <h1>QUOTATION</h1>
+                                        <p>Date: <span id="q-date-text">2026-07-02</span></p>
+                                        <p class="accent-text-light font-bold">GPay: 6374503310</p>
+                                    </div>
+                                </div>
+
+                                <hr class="divider">
+
+                                <div class="invoice-billing-details">
+                                    <div class="billing-to">
+                                        <strong>Quotation For:</strong>
+                                        <p id="q-cust-name">Customer Name</p>
+                                        <p id="q-cust-phone">Phone: -</p>
+                                        <p id="q-cust-email">Email: -</p>
+                                    </div>
+                                    <div class="billing-event">
+                                        <strong>Event Details:</strong>
+                                        <p>Service: <span id="q-event-service">-</span></p>
+                                        <p>Event Date: <span id="q-event-date">-</span></p>
+                                        <p>Venue: <span id="q-event-venue">-</span></p>
+                                    </div>
+                                </div>
+
+                                <!-- Service Picker Dropdown (Quick Insert) -->
+                                <div class="service-quick-picker no-print">
+                                    <label for="q-service-picker"><strong><i class="fa-solid fa-plus-circle"></i> Quick Select Service:</strong></label>
+                                    <select id="q-service-picker" onchange="addPresetServiceToQuotation(this.value); this.value='';">
+                                        <option value="">-- Click to choose and add service --</option>
+                                        <!-- Dynamic Options -->
+                                    </select>
+                                </div>
+
+                                <table class="invoice-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Description</th>
+                                            <th class="text-right" width="120">Rate (₹)</th>
+                                            <th class="text-right" width="80">Qty</th>
+                                            <th class="text-right" width="140">Total (₹)</th>
+                                            <th class="actions-col" width="50"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="quotation-items-tbody">
+                                        <!-- Items row -->
+                                    </tbody>
+                                </table>
+
+                                <div class="invoice-items-action no-print">
+                                    <button class="btn text-btn" onclick="addQuotationItem()"><i class="fa-solid fa-plus"></i> Add Item Line</button>
+                                </div>
+
+                                <div class="invoice-summary-section">
+                                    <div class="summary-notes">
+                                        <strong>Account & Payment Info:</strong>
+                                        <p>GPay Number: <strong>6374503310</strong></p>
+                                        <div class="date-lock-condition mt-10">
+                                            <strong><i class="fa-solid fa-circle-info"></i> Booking Condition:</strong>
+                                            <p class="condition-highlight">Note: To book the event and lock the date, a booking advance of ₹2,000 must be paid. Date will only be locked after payment is received.</p>
+                                        </div>
+                                    </div>
+                                    <div class="summary-calculations">
+                                        <div class="calc-row">
+                                            <span>Subtotal:</span>
+                                            <span id="q-subtotal">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row">
+                                            <span>Discount (₹):</span>
+                                            <input type="number" class="calc-input no-print" id="q-discount-input" value="0" oninput="calculateQuotationTotals()">
+                                            <span id="q-discount-display" class="print-only">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row total-row">
+                                            <span>Total Quote Amount:</span>
+                                            <span id="q-grand-total">₹0.00</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Billing & Invoices Section -->
+            <section id="tab-billing" class="tab-content">
+                <div class="billing-container">
+                    <!-- Left: Invoices List -->
+                    <div class="billing-sidebar-card">
+                        <div class="card-header">
+                            <h2>Invoices List</h2>
+                        </div>
+                        <div class="invoice-search-box">
+                            <input type="text" id="invoice-search" placeholder="Search invoice..." oninput="filterInvoices()">
+                        </div>
+                        <div class="invoices-list" id="invoices-list-container">
+                            <!-- Dynamic invoice items -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Editor/Viewer Panel -->
+                    <div class="billing-main-panel">
+                        <div class="no-selection-panel" id="invoice-placeholder">
+                            <i class="fa-solid fa-file-invoice-dollar placeholder-icon"></i>
+                            <h3>No Event Selected for Billing</h3>
+                            <p>Select an event from the left panel, or trigger Billing from the Events page.</p>
+                        </div>
+                        
+                        <div class="invoice-builder-panel hidden" id="invoice-editor">
+                            <div class="invoice-actions-header">
+                                <div>
+                                    <span class="badge" id="inv-status-badge">PENDING</span>
+                                    <span class="inv-number" id="inv-display-number">INV-0000</span>
+                                </div>
+                                <div class="action-buttons">
+                                    <button class="btn secondary-btn" onclick="printInvoice()"><i class="fa-solid fa-print"></i> Print Invoice</button>
+                                    <button class="btn secondary-btn" onclick="downloadInvoiceJPEG()"><i class="fa-solid fa-file-image"></i> Download JPEG</button>
+                                    <button class="btn secondary-btn" onclick="shareInvoiceJPEG()"><i class="fa-solid fa-share-nodes"></i> Share Image</button>
+                                    <button class="btn secondary-btn" onclick="shareInvoiceWhatsApp()"><i class="fa-brands fa-whatsapp text-green"></i> Share WhatsApp</button>
+                                    <button class="btn primary-btn" onclick="saveInvoiceChanges()"><i class="fa-solid fa-floppy-disk"></i> Save Invoice</button>
+                                </div>
+                            </div>
+
+                            <!-- Invoice A4 paper sheet -->
+                            <div class="invoice-paper a4-sheet" id="invoice-print-area">
+                                <div class="invoice-header">
+                                    <div class="invoice-logo">
+                                        <h2>DD Events</h2>
+                                        <p class="logo-sub">(Events & Management)</p>
+                                        <p class="address-line">AL.AR. Street, Kalayarkovil</p>
+                                        <p class="call-lines">Call: 6374503310, 6384203310</p>
+                                    </div>
+                                    <div class="invoice-title">
+                                        <h1>TAX INVOICE</h1>
+                                        <p>Date: <span id="inv-date-text">2026-07-02</span></p>
+                                        <p class="accent-text-light font-bold">GPay: 6374503310</p>
+                                    </div>
+                                </div>
+
+                                <hr class="divider">
+
+                                <div class="invoice-billing-details">
+                                    <div class="billing-to">
+                                        <strong>Billed To:</strong>
+                                        <p id="inv-cust-name">Customer Name</p>
+                                        <p id="inv-cust-phone">Phone: -</p>
+                                        <p id="inv-cust-email">Email: -</p>
+                                    </div>
+                                    <div class="billing-event">
+                                        <strong>Event Details:</strong>
+                                        <p>Service: <span id="inv-event-service">-</span></p>
+                                        <p>Event Date: <span id="inv-event-date">-</span></p>
+                                        <p>Venue: <span id="inv-event-venue">-</span></p>
+                                    </div>
+                                </div>
+
+                                <!-- Service Picker Dropdown (Quick Insert) -->
+                                <div class="service-quick-picker no-print">
+                                    <label for="inv-service-picker"><strong><i class="fa-solid fa-plus-circle"></i> Quick Select Service:</strong></label>
+                                    <select id="inv-service-picker" onchange="addPresetServiceToInvoice(this.value); this.value='';">
+                                        <option value="">-- Click to choose and add service --</option>
+                                        <!-- Dynamic Options -->
+                                    </select>
+                                </div>
+
+                                <table class="invoice-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Description</th>
+                                            <th class="text-right" width="120">Rate (₹)</th>
+                                            <th class="text-right" width="80">Qty</th>
+                                            <th class="text-right" width="140">Total (₹)</th>
+                                            <th class="actions-col" width="50"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="invoice-items-tbody">
+                                        <!-- Items row -->
+                                    </tbody>
+                                </table>
+
+                                <div class="invoice-items-action no-print">
+                                    <button class="btn text-btn" onclick="addInvoiceItem()"><i class="fa-solid fa-plus"></i> Add Item Line</button>
+                                </div>
+
+                                <div class="invoice-summary-section">
+                                    <div class="summary-notes">
+                                        <strong>Account & Payment Info:</strong>
+                                        <p>GPay Number: <strong>6374503310</strong></p>
+                                    </div>
+                                    <div class="summary-calculations">
+                                        <div class="calc-row">
+                                            <span>Subtotal:</span>
+                                            <span id="inv-subtotal">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row">
+                                            <span>Discount (₹):</span>
+                                            <input type="number" class="calc-input no-print" id="inv-discount-input" value="0" oninput="calculateInvoiceTotals()">
+                                            <span id="inv-discount-display" class="print-only">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row total-row">
+                                            <span>Total Amount:</span>
+                                            <span id="inv-grand-total">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row payments-row">
+                                            <span>Amount Paid:</span>
+                                            <span id="inv-paid-total">₹0.00</span>
+                                        </div>
+                                        <div class="calc-row balance-row">
+                                            <span>Pending Balance:</span>
+                                            <span id="inv-pending-balance" class="text-red">₹0.00</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Payment Actions Section -->
+                            <div class="payment-activity-card no-print">
+                                <h3>Record Payment</h3>
+                                <form id="record-payment-form" onsubmit="event.preventDefault(); recordPayment();">
+                                    <div class="form-row-three">
+                                        <div class="form-group">
+                                            <label for="pay-amount">Amount Paid (₹)</label>
+                                            <input type="number" id="pay-amount" required min="1">
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="pay-date">Payment Date</label>
+                                            <input type="date" id="pay-date" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="pay-method">Payment Mode / Type</label>
+                                            <select id="pay-method">
+                                                <option value="Advance Payment">Advance Payment (Booking)</option>
+                                                <option value="Partial Payment">Partial Payment</option>
+                                                <option value="Cash">Cash (Standard)</option>
+                                                <option value="GPay/UPI">GPay/UPI</option>
+                                                <option value="Bank Transfer">Bank Transfer</option>
+                                                <option value="Cheque">Cheque</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="btn primary-btn"><i class="fa-solid fa-wallet"></i> Log Payment</button>
+                                </form>
+
+                                <h3 style="margin-top: 20px;">Payment History</h3>
+                                <table class="simple-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Amount (₹)</th>
+                                            <th>Method / Mode</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="payment-history-tbody">
+                                        <!-- Payment logs -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Staff Attendance Section -->
+            <section id="tab-staff" class="tab-content">
+                <div class="staff-layout">
+                    <!-- Column 1: Staff Terminal (Check-in/out) -->
+                    <div class="staff-left-panel">
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h2><i class="fa-solid fa-clock-rotate-left"></i> Attendance Terminal</h2>
+                            </div>
+                            
+                            <div class="terminal-body">
+                                <p>Select your name to check in for work or check out when leaving.</p>
+                                <div class="form-group">
+                                    <label for="attendance-staff-select">Select Staff Member</label>
+                                    <select id="attendance-staff-select" class="form-control-large">
+                                        <option value="">-- Choose Staff --</option>
+                                        <!-- Dynamic Staff list -->
+                                    </select>
+                                </div>
+                                <div class="attendance-buttons">
+                                    <button class="btn checkin-btn btn-lg" onclick="markStaffCheckIn()"><i class="fa-solid fa-right-to-bracket"></i> Check In (Arrival)</button>
+                                    <button class="btn checkout-btn btn-lg" onclick="markStaffCheckOut()"><i class="fa-solid fa-right-from-bracket"></i> Check Out (Closing)</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Staff list configuration -->
+                        <div class="dashboard-card" style="margin-top: 20px;">
+                            <div class="card-header">
+                                <h2>Manage Staff</h2>
+                            </div>
+                            <form id="add-staff-form" class="form-compact" onsubmit="event.preventDefault(); addStaffMember();">
+                                <div class="form-row-two">
+                                    <input type="text" id="new-staff-name" placeholder="Staff Name" required autocomplete="name">
+                                    <input type="text" id="new-staff-role" placeholder="Role (e.g. Photographer)" required>
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-plus"></i> Add Staff</button>
+                            </form>
+
+                            <div class="staff-list-display">
+                                <table class="simple-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Role</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="staff-members-tbody">
+                                        <!-- Dynamic staff members -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: Attendance Logs -->
+                    <div class="staff-right-panel">
+                        <div class="dashboard-card">
+                            <div class="card-header">
+                                <h2>Attendance Log</h2>
+                                <div class="date-filter">
+                                    <input type="date" id="attendance-log-date" onchange="loadAttendanceLogs()">
+                                </div>
+                            </div>
+                            <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Staff Name</th>
+                                            <th>Role</th>
+                                            <th>Check-In</th>
+                                            <th>Check-Out</th>
+                                            <th>Working Hours</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="attendance-log-tbody">
+                                        <!-- Logs data -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Staff Work Logs Section (submitted from the separate Staff Portal) -->
+            <section id="tab-worklogs" class="tab-content">
+                <div class="search-bar" style="margin-bottom: 20px;">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="worklog-search" placeholder="Search by staff name, location, work..." oninput="filterWorkLogs()">
+                </div>
+                <div class="dashboard-card">
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Staff</th>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Where</th>
+                                    <th>What Work</th>
+                                </tr>
+                            </thead>
+                            <tbody id="worklogs-tbody">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Event Staff Approvals - staff applied to work an event from the Staff Portal; admin approves/rejects here -->
+            <section id="tab-event-approvals" class="tab-content">
+                <div class="search-bar" style="margin-bottom: 20px;">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="approvals-search" placeholder="Search by event, customer, staff name..." oninput="filterEventApprovals()">
+                </div>
+                <div class="dashboard-card">
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Event (Customer / Date / Venue)</th>
+                                    <th>Service</th>
+                                    <th>Staff Name</th>
+                                    <th>Phone</th>
+                                    <th>Applied On</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="event-approvals-tbody">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Customers Section -->
+            <section id="tab-customers" class="tab-content">
+                <div class="search-bar" style="margin-bottom: 20px;">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="customer-search" placeholder="Search customers by name, phone..." oninput="filterCustomers()">
+                </div>
+                <div class="dashboard-card">
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Customer Name</th>
+                                    <th>Contact</th>
+                                    <th>Email</th>
+                                    <th>Total Events</th>
+                                    <th>Total Billed</th>
+                                    <th>Pending Balance</th>
+                                    <th>History</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customers-list-tbody">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Section -->
+            <section id="tab-settings" class="tab-content">
+                <div class="settings-grid">
+                    <!-- Webhook Panel -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-route text-lavender"></i> Webhooks & Automation</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>Configure webhook endpoints to send live event details to external platforms (Make.com, Zapier, n8n, etc.) automatically.</p>
+                            
+                            <form id="webhook-settings-form" onsubmit="event.preventDefault(); saveWebhookSettings();">
+                                <div class="form-group">
+                                    <label for="webhook-url">Webhook URL</label>
+                                    <input type="url" id="webhook-url" placeholder="https://hook.make.com/..." class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Trigger Events</label>
+                                    <div class="checkbox-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="trigger-inquiry" checked> New Event Inquiry Created
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="trigger-payment" checked> Payment Recorded
+                                        </label>
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="trigger-attendance" checked> Staff Check-In / Check-Out
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="settings-actions">
+                                    <button type="button" class="btn secondary-btn" onclick="testWebhook()"><i class="fa-solid fa-vial"></i> Send Test Payload</button>
+                                    <button type="submit" class="btn primary-btn"><i class="fa-solid fa-save"></i> Save Webhook Settings</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Backup & Restore -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-database text-yellow"></i> Data Backup & Safety</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>All your data is saved locally on your browser. To prevent data loss, please regularly export backups.</p>
+                            
+                            <div class="backup-actions">
+                                <button class="btn primary-btn btn-lg btn-block" onclick="exportDataBackup()"><i class="fa-solid fa-file-export"></i> Export Data Backup (JSON)</button>
+                                
+                                <hr class="panel-divider">
+                                
+                                <label for="import-file" class="import-label">Restore Data from Backup</label>
+                                <input type="file" id="import-file" accept=".json" class="file-input-hidden" onchange="importDataBackup(event)">
+                                <button class="btn secondary-btn btn-lg btn-block" onclick="document.getElementById('import-file').click()"><i class="fa-solid fa-file-import"></i> Import Data Backup</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Change Password -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-key"></i> Security Settings</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <form id="change-password-form" onsubmit="event.preventDefault(); changeMasterPassword();">
+                                <div class="form-group">
+                                    <label for="old-pass">Current Password</label>
+                                    <input type="password" id="old-pass" required autocomplete="current-password">
+                                </div>
+                                <div class="form-group">
+                                    <label for="change-pass">New Password</label>
+                                    <input type="password" id="change-pass" required autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-lock-open"></i> Update Password</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Staff Portal Access -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-user-shield text-lavender"></i> Staff Portal Access</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>Set a separate password for your staff. They use this (not your admin password) to open the Staff Work Log portal on the login screen and update their work, location, date & time.</p>
+                            <form id="staff-password-form" onsubmit="event.preventDefault(); setStaffPassword();">
+                                <div class="form-group">
+                                    <label for="staff-pass-input">Staff Access Password</label>
+                                    <input type="password" id="staff-pass-input" placeholder="Set staff password" required autocomplete="new-password">
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-shield-halved"></i> Save Staff Password</button>
+                            </form>
+                            <p id="staff-password-status" class="text-muted" style="margin-top: 10px; font-size: 0.85rem;"></p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <!-- Modal: Add / Edit Event Inquiry -->
+    <div id="add-event-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 id="modal-title">New Event Inquiry</h2>
+                <button onclick="closeModal('add-event-modal')" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="event-inquiry-form" onsubmit="event.preventDefault(); submitEventForm();">
+                    <input type="hidden" id="event-id-field">
+                    <div class="form-row-two">
+                        <div class="form-group">
+                            <label for="client-name">Customer Name</label>
+                            <input type="text" id="client-name" required autocomplete="name">
+                        </div>
+                        <div class="form-group">
+                            <label for="client-phone">Customer Phone (WhatsApp Enabled)</label>
+                            <input type="tel" id="client-phone" required placeholder="e.g. 919876543210" autocomplete="tel">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="client-email">Customer Email</label>
+                        <input type="email" id="client-email" autocomplete="email">
+                    </div>
+                    <div class="form-group">
+                        <label for="event-venue">Venue / Location</label>
+                        <input type="text" id="event-venue" placeholder="e.g. AL.AR. Mahal, Kalayarkovil">
+                    </div>
+                    <div class="form-row-two">
+                        <div class="form-group">
+                            <label for="event-date">Event Date</label>
+                            <input type="date" id="event-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="service-type">Primary Service Type</label>
+                            <select id="service-type" required>
+                                <option value="">-- Select Service --</option>
+                                <option value="Wedding Photography">Wedding Photography</option>
+                                <option value="Outdoor Shoot">Outdoor Shoot</option>
+                                <option value="Baby Shower Event">Baby Shower Event</option>
+                                <option value="Birthday Party Management">Birthday Party Management</option>
+                                <option value="Corporate Event Decoration">Corporate Event Decoration</option>
+                                <option value="Catering Setup">Catering Setup</option>
+                                <option value="Full Event Management">Full Event Management</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row-two">
+                        <div class="form-group">
+                            <label for="event-budget">Estimated Budget / Initial Quote (₹)</label>
+                            <input type="number" id="event-budget" required min="0">
+                        </div>
+                        <div class="form-group checkbox-form-group">
+                            <label class="checkbox-label" style="margin-top: 30px;">
+                                <input type="checkbox" id="event-held-completed"> Event Held / Completed (Held)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="event-notes">Inquiry Details / Client Requests</label>
+                        <textarea id="event-notes" rows="3" placeholder="Specify any decoration, camera requests, timeline, location..."></textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn secondary-btn" onclick="closeModal('add-event-modal')">Cancel</button>
+                        <button type="submit" class="btn primary-btn">Save Entry</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Import -->
+    <script src="app.js?v=5"></script>
+</body>
+</html>
