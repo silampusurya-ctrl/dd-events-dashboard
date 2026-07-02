@@ -1018,15 +1018,19 @@
                             <h2><i class="fa-solid fa-user-shield text-lavender"></i> Staff Portal Access</h2>
                         </div>
                         <div class="settings-panel-body">
-                            <p>Set a separate password for your staff. They use this (not your admin password) to open the Staff Work Log portal on the login screen and update their work, location, date & time.</p>
+                            <p>Create or change the separate password your staff use (not your admin password) to open the Staff Work Log portal and update their work, location, date & time.</p>
+                            <p id="staff-password-status" class="text-muted" style="margin-bottom: 14px; font-size: 0.85rem;"></p>
                             <form id="staff-password-form" onsubmit="event.preventDefault(); setStaffPassword();">
                                 <div class="form-group">
-                                    <label for="staff-pass-input">Staff Access Password</label>
-                                    <input type="password" id="staff-pass-input" placeholder="Set staff password" required autocomplete="new-password">
+                                    <label for="staff-pass-input" id="staff-pass-input-label">Staff Access Password</label>
+                                    <input type="password" id="staff-pass-input" placeholder="Enter password" required autocomplete="new-password" minlength="4">
                                 </div>
-                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-shield-halved"></i> Save Staff Password</button>
+                                <div class="form-group">
+                                    <label for="staff-pass-confirm-input">Confirm Password</label>
+                                    <input type="password" id="staff-pass-confirm-input" placeholder="Re-enter password" required autocomplete="new-password" minlength="4">
+                                </div>
+                                <button type="submit" class="btn primary-btn" id="staff-pass-submit-btn"><i class="fa-solid fa-shield-halved"></i> Save Staff Password</button>
                             </form>
-                            <p id="staff-password-status" class="text-muted" style="margin-top: 10px; font-size: 0.85rem;"></p>
                         </div>
                     </div>
                 </div>
@@ -1107,6 +1111,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=6"></script>
 </body>
 </html>

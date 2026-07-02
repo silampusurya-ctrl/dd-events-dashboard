@@ -237,26 +237,46 @@ async function handleStaffLogin(e) {
 
 async function setStaffPassword() {
     const pass = document.getElementById('staff-pass-input').value;
+    const confirmPass = document.getElementById('staff-pass-confirm-input').value;
+    const isChange = localStorage.getItem('dd_staff_password_hash') !== null;
 
     if (pass.length < 4) {
         showToast('Staff password must be at least 4 characters long.');
         return;
     }
 
+    if (pass !== confirmPass) {
+        showToast('Passwords do not match.');
+        return;
+    }
+
     const hash = await sha256(pass);
     localStorage.setItem('dd_staff_password_hash', hash);
-    showToast('Staff portal password saved!');
+    showToast(isChange ? 'Staff portal password changed!' : 'Staff portal password created!');
     document.getElementById('staff-password-form').reset();
     loadStaffPasswordStatus();
 }
 
 function loadStaffPasswordStatus() {
-    const el = document.getElementById('staff-password-status');
-    if (!el) return;
+    const statusEl = document.getElementById('staff-password-status');
+    const labelEl = document.getElementById('staff-pass-input-label');
+    const submitBtn = document.getElementById('staff-pass-submit-btn');
+    if (!statusEl) return;
+
     const hasStaffPassword = localStorage.getItem('dd_staff_password_hash') !== null;
-    el.textContent = hasStaffPassword
+
+    statusEl.textContent = hasStaffPassword
         ? 'Staff portal password is set. Share it only with your staff.'
-        : 'No staff password set yet - staff cannot log in until you set one here.';
+        : 'No staff password set yet - staff cannot log in until you create one below.';
+
+    if (labelEl) {
+        labelEl.textContent = hasStaffPassword ? 'New Staff Access Password' : 'Staff Access Password';
+    }
+    if (submitBtn) {
+        submitBtn.innerHTML = hasStaffPassword
+            ? '<i class="fa-solid fa-shield-halved"></i> Change Staff Password'
+            : '<i class="fa-solid fa-shield-halved"></i> Create Staff Password';
+    }
 }
 
 function staffLogout() {
