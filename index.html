@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=4">
+    <link rel="stylesheet" href="style.css?v=6">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -49,9 +49,13 @@
         <div class="auth-card">
             <h1 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events</h1>
             <div id="password-setup-view" class="hidden">
-                <h2>Set Master Password</h2>
-                <p>Welcome! Create a secure password to protect your events dashboard data locally.</p>
+                <h2>Create Admin Account</h2>
+                <p>Welcome! Create your office login (email + password). You can add up to your whole office team as separate logins later from Settings.</p>
                 <form id="setup-password-form">
+                    <div class="form-group">
+                        <label for="setup-email">Your Email</label>
+                        <input type="email" id="setup-email" placeholder="e.g. you@ddevents.com" required autocomplete="email">
+                    </div>
                     <div class="form-group">
                         <label for="new-password">New Password</label>
                         <input type="password" id="new-password" placeholder="Enter new password" required autocomplete="new-password">
@@ -60,10 +64,10 @@
                         <label for="confirm-password">Confirm Password</label>
                         <input type="password" id="confirm-password" placeholder="Re-enter password" required autocomplete="new-password">
                     </div>
-                    <button type="submit" class="btn primary-btn btn-block">Set Password</button>
+                    <button type="submit" class="btn primary-btn btn-block">Create Account</button>
                 </form>
             </div>
-            
+
             <div id="password-login-view" class="hidden">
                 <div class="auth-mode-toggle">
                     <button type="button" class="auth-mode-btn active" id="mode-admin-btn" onclick="setAuthMode('admin')">Office (Admin)</button>
@@ -72,14 +76,18 @@
 
                 <div id="admin-login-fields">
                     <h2>Access Dashboard</h2>
-                    <p>Enter your master password to unlock the application.</p>
+                    <p>Enter your email and password to unlock the application.</p>
                     <form id="login-password-form">
                         <div class="form-group">
-                            <label for="login-password">Master Password</label>
+                            <label for="login-email">Email</label>
+                            <input type="email" id="login-email" placeholder="you@ddevents.com" autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
                             <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password">
                         </div>
                         <button type="submit" class="btn primary-btn btn-block">Unlock Dashboard</button>
-                        <div id="login-error-msg" class="error-text hidden">Incorrect password. Please try again.</div>
+                        <div id="login-error-msg" class="error-text hidden">Incorrect email or password. Please try again.</div>
                     </form>
                 </div>
 
@@ -158,10 +166,14 @@
 
     <!-- Main Dashboard Application Layout (Hidden initially) -->
     <div id="app-container" class="app-layout hidden">
+        <!-- Mobile-only backdrop shown behind the sidebar when it's open -->
+        <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+
         <!-- Sidebar Navigation -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="app-sidebar">
             <div class="sidebar-header">
                 <h2 class="logo-text"><i class="fa-solid fa-calendar-days"></i> DD Events</h2>
+                <button class="sidebar-close-btn" onclick="closeSidebar()" aria-label="Close menu"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <nav class="sidebar-menu">
                 <a href="#dashboard" class="menu-item active" onclick="switchTab('dashboard')">
@@ -224,6 +236,7 @@
             <!-- Header -->
             <header class="main-header">
                 <div class="header-left">
+                    <button class="sidebar-toggle-btn" onclick="openSidebar()" aria-label="Open menu"><i class="fa-solid fa-bars"></i></button>
                     <h1 id="current-tab-title">Dashboard</h1>
                 </div>
                 <div class="header-right">
@@ -240,7 +253,7 @@
                     </div>
                     <div class="user-profile">
                         <span class="user-avatar"><i class="fa-solid fa-user-tie"></i></span>
-                        <span class="user-name">Administrator</span>
+                        <span class="user-name" id="current-admin-name">Administrator</span>
                     </div>
                 </div>
             </header>
@@ -992,13 +1005,13 @@
                         </div>
                     </div>
 
-                    <!-- Change Password -->
+                    <!-- Change My Password -->
                     <div class="dashboard-card">
                         <div class="card-header">
-                            <h2><i class="fa-solid fa-key"></i> Security Settings</h2>
+                            <h2><i class="fa-solid fa-key"></i> Change My Password</h2>
                         </div>
                         <div class="settings-panel-body">
-                            <form id="change-password-form" onsubmit="event.preventDefault(); changeMasterPassword();">
+                            <form id="change-password-form" onsubmit="event.preventDefault(); changeMyPassword();">
                                 <div class="form-group">
                                     <label for="old-pass">Current Password</label>
                                     <input type="password" id="old-pass" required autocomplete="current-password">
@@ -1008,6 +1021,40 @@
                                     <input type="password" id="change-pass" required autocomplete="new-password">
                                 </div>
                                 <button type="submit" class="btn primary-btn"><i class="fa-solid fa-lock-open"></i> Update Password</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Admin Accounts (office team logins) -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-users-gear"></i> Admin Accounts</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>Give each person in the office their own login (email + password) to this dashboard. All accounts see the same shared data on this device.</p>
+
+                            <div id="admin-accounts-list" class="admin-accounts-list">
+                                <!-- Dynamic account rows -->
+                            </div>
+
+                            <hr class="panel-divider">
+
+                            <form id="add-admin-form" class="form-compact" onsubmit="event.preventDefault(); addAdminAccount();">
+                                <div class="form-group">
+                                    <label for="new-admin-email">Email</label>
+                                    <input type="email" id="new-admin-email" placeholder="teammate@ddevents.com" required autocomplete="off">
+                                </div>
+                                <div class="form-row-two">
+                                    <div class="form-group">
+                                        <label for="new-admin-password">Password</label>
+                                        <input type="password" id="new-admin-password" required minlength="4" autocomplete="new-password">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="new-admin-password-confirm">Confirm Password</label>
+                                        <input type="password" id="new-admin-password-confirm" required minlength="4" autocomplete="new-password">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-user-plus"></i> Add Admin Account</button>
                             </form>
                         </div>
                     </div>
@@ -1111,6 +1158,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=8"></script>
 </body>
 </html>

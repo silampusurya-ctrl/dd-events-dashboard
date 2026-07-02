@@ -1613,6 +1613,43 @@ tr:hover td {
     margin: 10px 0;
 }
 
+.admin-accounts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.admin-account-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(123, 44, 191, 0.05);
+    border-radius: 8px;
+    font-size: 0.9rem;
+}
+
+.admin-account-row .admin-account-email {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dark);
+    font-weight: bold;
+    word-break: break-all;
+}
+
+.admin-account-row .admin-account-you-tag {
+    font-size: 0.7rem;
+    font-weight: bold;
+    color: var(--primary-lavender);
+    background: rgba(123, 44, 191, 0.12);
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+}
+
 .import-label {
     font-weight: bold;
     font-size: 0.95rem;
@@ -1784,5 +1821,248 @@ tr:hover td {
     }
     .kanban-column {
         min-height: auto;
+    }
+}
+
+/* ==========================================
+   MOBILE / TABLET RESPONSIVE LAYOUT
+   ========================================== */
+
+.sidebar-toggle-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    color: var(--primary-lavender);
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.sidebar-close-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    font-size: 1.4rem;
+    color: var(--white);
+    cursor: pointer;
+}
+
+.sidebar-overlay {
+    display: none;
+}
+
+@media (max-width: 900px) {
+    .app-layout {
+        display: block;
+    }
+
+    .sidebar-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 260px;
+        max-width: 82vw;
+        z-index: 999;
+        transform: translateX(-100%);
+        transition: transform var(--transition-speed) ease;
+        overflow-y: auto;
+    }
+
+    .sidebar.mobile-open {
+        transform: translateX(0);
+    }
+
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .sidebar-close-btn {
+        display: inline-flex;
+    }
+
+    .sidebar-overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(36, 0, 70, 0.5);
+        z-index: 998;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--transition-speed) ease;
+    }
+
+    .sidebar-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .main-content {
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .main-header {
+        padding: 14px 18px;
+    }
+
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .header-left h1 {
+        font-size: 1.25rem;
+    }
+
+    .header-right {
+        gap: 14px;
+    }
+
+    .user-name {
+        display: none;
+    }
+
+    .tab-content {
+        padding: 18px;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+    }
+
+    .billing-container,
+    .staff-layout,
+    .form-row-two,
+    .form-row-three {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-grid {
+        grid-template-columns: 1fr;
+        gap: 18px;
+    }
+
+    .pipeline-cards-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .invoice-actions-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .action-buttons {
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-start;
+    }
+
+    .invoice-header {
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .invoice-title {
+        text-align: left !important;
+    }
+
+    .invoice-billing-details,
+    .invoice-summary-section {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .invoice-paper {
+        padding: 20px;
+    }
+
+    .modal-overlay {
+        padding: 15px;
+    }
+
+    .modal-header {
+        padding: 16px 20px;
+    }
+
+    .modal-body {
+        padding: 20px;
+    }
+
+    .staff-portal-card {
+        padding: 20px;
+        max-width: 100%;
+        border-radius: 0;
+        min-height: 100vh;
+    }
+
+    .staff-portal-wrapper {
+        padding: 0;
+    }
+
+    .staff-portal-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .auth-card {
+        padding: 26px 22px;
+    }
+
+    .auth-mode-toggle {
+        flex-direction: row;
+    }
+
+    .section-actions {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .card-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    .logo-text {
+        font-size: 1.5rem;
+    }
+
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .stat-card {
+        padding: 14px;
+    }
+
+    .dashboard-card,
+    .billing-sidebar-card,
+    .kanban-card {
+        padding: 14px;
+    }
+
+    .btn {
+        padding: 10px 14px;
+        font-size: 0.9rem;
+    }
+
+    .install-banner {
+        width: calc(100% - 20px);
+        bottom: 10px;
+        padding: 12px;
     }
 }

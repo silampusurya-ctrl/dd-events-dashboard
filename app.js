@@ -160,8 +160,39 @@ async function triggerAppInstall() {
 // 1. AUTHENTICATION MODULE
 // ==========================================
 
+// Admin accounts: an array of { email, passwordHash } stored locally on this
+// device. Every account shares the same appState data - this just lets each
+// person in the office log in with their own email + password.
+function getAdminAccounts() {
+    migrateLegacyMasterPassword();
+    const data = localStorage.getItem('dd_admin_accounts');
+    try {
+        return data ? JSON.parse(data) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveAdminAccounts(accounts) {
+    localStorage.setItem('dd_admin_accounts', JSON.stringify(accounts));
+}
+
+// One-time migration: older versions of this app used a single shared
+// "master password" instead of per-person accounts. Turn that into the
+// first admin account so existing installs keep working.
+function migrateLegacyMasterPassword() {
+    const legacyHash = localStorage.getItem('dd_master_password_hash');
+    if (!legacyHash) return;
+
+    const hasAccounts = localStorage.getItem('dd_admin_accounts') !== null;
+    if (!hasAccounts) {
+        saveAdminAccounts([{ email: 'admin@ddevents.local', passwordHash: legacyHash }]);
+    }
+    localStorage.removeItem('dd_master_password_hash');
+}
+
 async function initAuth() {
-    const hasPassword = localStorage.getItem('dd_master_password_hash') !== null;
+    const hasPassword = getAdminAccounts().length > 0;
     const isAuthenticated = sessionStorage.getItem('dd_authenticated') === 'true';
     const isStaffAuthenticated = sessionStorage.getItem('dd_staff_authenticated') === 'true';
 
@@ -295,6 +326,7 @@ async function sha256(message) {
 
 async function handleSetupPassword(e) {
     e.preventDefault();
+    const email = document.getElementById('setup-email').value.trim().toLowerCase();
     const newPass = document.getElementById('new-password').value;
     const confirmPass = document.getElementById('confirm-password').value;
 
@@ -309,22 +341,27 @@ async function handleSetupPassword(e) {
     }
 
     const hash = await sha256(newPass);
-    localStorage.setItem('dd_master_password_hash', hash);
+    saveAdminAccounts([{ email, passwordHash: hash }]);
     sessionStorage.setItem('dd_authenticated', 'true');
-    
-    showToast('Master password set successfully!');
+    sessionStorage.setItem('dd_current_admin_email', email);
+
+    showToast('Admin account created!');
     initAuth();
 }
 
 async function handleLoginPassword(e) {
     e.preventDefault();
+    const email = document.getElementById('login-email').value.trim().toLowerCase();
     const enteredPass = document.getElementById('login-password').value;
-    const storedHash = localStorage.getItem('dd_master_password_hash');
     const enteredHash = await sha256(enteredPass);
 
-    if (enteredHash === storedHash) {
+    const account = getAdminAccounts().find(a => a.email === email);
+
+    if (account && account.passwordHash === enteredHash) {
         sessionStorage.setItem('dd_authenticated', 'true');
+        sessionStorage.setItem('dd_current_admin_email', account.email);
         hideView('login-error-msg');
+        document.getElementById('login-password').value = '';
         initAuth();
     } else {
         showView('login-error-msg');
@@ -333,13 +370,17 @@ async function handleLoginPassword(e) {
     }
 }
 
-async function changeMasterPassword() {
+async function changeMyPassword() {
     const oldPass = document.getElementById('old-pass').value;
     const changePass = document.getElementById('change-pass').value;
-    const storedHash = localStorage.getItem('dd_master_password_hash');
-    const oldHash = await sha256(oldPass);
+    const currentEmail = sessionStorage.getItem('dd_current_admin_email');
 
-    if (oldHash !== storedHash) {
+    const accounts = getAdminAccounts();
+    const account = accounts.find(a => a.email === currentEmail);
+    if (!account) return;
+
+    const oldHash = await sha256(oldPass);
+    if (oldHash !== account.passwordHash) {
         showToast('Current password incorrect.');
         return;
     }
@@ -349,14 +390,86 @@ async function changeMasterPassword() {
         return;
     }
 
-    const newHash = await sha256(changePass);
-    localStorage.setItem('dd_master_password_hash', newHash);
+    account.passwordHash = await sha256(changePass);
+    saveAdminAccounts(accounts);
     showToast('Password updated successfully!');
     document.getElementById('change-password-form').reset();
 }
 
+// Adds another office login (email + password) from Settings -> Admin Accounts.
+async function addAdminAccount() {
+    const email = document.getElementById('new-admin-email').value.trim().toLowerCase();
+    const pass = document.getElementById('new-admin-password').value;
+    const confirmPass = document.getElementById('new-admin-password-confirm').value;
+
+    if (pass.length < 4) {
+        showToast('Password must be at least 4 characters long.');
+        return;
+    }
+
+    if (pass !== confirmPass) {
+        showToast('Passwords do not match.');
+        return;
+    }
+
+    const accounts = getAdminAccounts();
+    if (accounts.some(a => a.email === email)) {
+        showToast('An account with this email already exists.');
+        return;
+    }
+
+    accounts.push({ email, passwordHash: await sha256(pass) });
+    saveAdminAccounts(accounts);
+    showToast(`Admin account added for ${email}.`);
+    document.getElementById('add-admin-form').reset();
+    renderAdminAccountsList();
+}
+
+function deleteAdminAccount(email) {
+    const accounts = getAdminAccounts();
+
+    if (accounts.length <= 1) {
+        showToast('You need at least one admin account.');
+        return;
+    }
+
+    if (email === sessionStorage.getItem('dd_current_admin_email')) {
+        showToast("You can't remove the account you're currently logged in with.");
+        return;
+    }
+
+    if (!confirm(`Remove admin account "${email}"?`)) return;
+
+    saveAdminAccounts(accounts.filter(a => a.email !== email));
+    showToast('Admin account removed.');
+    renderAdminAccountsList();
+}
+
+function renderAdminAccountsList() {
+    const container = document.getElementById('admin-accounts-list');
+    if (!container) return;
+
+    const accounts = getAdminAccounts();
+    const currentEmail = sessionStorage.getItem('dd_current_admin_email');
+
+    container.innerHTML = accounts.map(a => `
+        <div class="admin-account-row">
+            <span class="admin-account-email">
+                <i class="fa-solid fa-user-tie"></i> ${a.email}
+                ${a.email === currentEmail ? '<span class="admin-account-you-tag">You</span>' : ''}
+            </span>
+            ${accounts.length > 1 && a.email !== currentEmail
+                ? `<button class="action-icon-btn danger" title="Remove account" onclick="deleteAdminAccount('${a.email}')"><i class="fa-solid fa-trash"></i></button>`
+                : ''}
+        </div>
+    `).join('');
+
+    document.getElementById('current-admin-name').textContent = currentEmail || 'Administrator';
+}
+
 function logout() {
     sessionStorage.removeItem('dd_authenticated');
+    sessionStorage.removeItem('dd_current_admin_email');
     appState = { events: [], staff: [], attendance: [], workLogs: [], staffApplications: [], webhooks: {} };
     initAuth();
 }
@@ -416,6 +529,7 @@ async function startApplication() {
     populatePresetServicePickers();
     switchTab('dashboard');
     refreshAllViews();
+    document.getElementById('current-admin-name').textContent = sessionStorage.getItem('dd_current_admin_email') || 'Administrator';
 
     const today = getTodayDateString();
     document.getElementById('event-date').value = today;
@@ -744,24 +858,38 @@ function refreshActivePipelineStage() {
     renderPipelineStage(activeTab.id.replace('tab-stage-', ''));
 }
 
+// Mobile sidebar drawer - the sidebar is a fixed off-canvas panel below the
+// 900px breakpoint (see style.css), toggled by the header hamburger button.
+function openSidebar() {
+    document.getElementById('app-sidebar').classList.add('mobile-open');
+    document.getElementById('sidebar-overlay').classList.add('visible');
+}
+
+function closeSidebar() {
+    document.getElementById('app-sidebar').classList.remove('mobile-open');
+    document.getElementById('sidebar-overlay').classList.remove('visible');
+}
+
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
-    
+
     document.querySelectorAll('.menu-item').forEach(item => {
         item.classList.remove('active');
     });
-    
+
     const activeTab = document.getElementById(`tab-${tabId}`);
     if (activeTab) {
         activeTab.classList.add('active');
     }
-    
+
     const activeNav = document.querySelector(`.sidebar-menu a[href="#${tabId}"]`);
     if (activeNav) {
         activeNav.classList.add('active');
     }
+
+    closeSidebar();
     
     const stageTitles = {};
     STAGE_DEFS.forEach(s => { stageTitles[`stage-${s.key}`] = s.label; });
@@ -800,6 +928,7 @@ function switchTab(tabId) {
         renderCustomersList();
     } else if (tabId === 'settings') {
         loadStaffPasswordStatus();
+        renderAdminAccountsList();
     }
     
     hideView('notification-dropdown');
