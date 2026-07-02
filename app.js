@@ -105,6 +105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('setup-password-form').addEventListener('submit', handleSetupPassword);
     document.getElementById('login-password-form').addEventListener('submit', handleLoginPassword);
     document.getElementById('staff-login-form').addEventListener('submit', handleStaffLogin);
+    document.getElementById('create-account-form').addEventListener('submit', handleCreateAdminAccount);
 
     registerServiceWorker();
     setupInstallPrompt();
@@ -232,14 +233,65 @@ function setAuthMode(mode) {
     const isAdmin = mode === 'admin';
     document.getElementById('mode-admin-btn').classList.toggle('active', isAdmin);
     document.getElementById('mode-staff-btn').classList.toggle('active', !isAdmin);
-    document.getElementById('admin-login-fields').classList.toggle('hidden', !isAdmin);
     document.getElementById('staff-login-fields').classList.toggle('hidden', isAdmin);
+    document.getElementById('create-account-fields').classList.add('hidden');
+    document.getElementById('admin-login-fields').classList.toggle('hidden', !isAdmin);
 
     if (isAdmin) {
         document.getElementById('login-password').focus();
     } else {
         document.getElementById('staff-login-password').focus();
     }
+}
+
+// Toggles between the login form and the "create new account" form on the
+// admin side of the login screen - lets any office teammate self-register
+// their own email + password without needing an already-logged-in admin.
+function showCreateAccountView() {
+    document.getElementById('admin-login-fields').classList.add('hidden');
+    document.getElementById('create-account-fields').classList.remove('hidden');
+    hideView('create-account-error-msg');
+    document.getElementById('create-account-email').focus();
+}
+
+function showAdminLoginView() {
+    document.getElementById('create-account-fields').classList.add('hidden');
+    document.getElementById('admin-login-fields').classList.remove('hidden');
+    document.getElementById('login-email').focus();
+}
+
+async function handleCreateAdminAccount(e) {
+    e.preventDefault();
+    const email = document.getElementById('create-account-email').value.trim().toLowerCase();
+    const pass = document.getElementById('create-account-password').value;
+    const confirmPass = document.getElementById('create-account-password-confirm').value;
+
+    if (pass.length < 4) {
+        showToast('Password must be at least 4 characters long.');
+        return;
+    }
+
+    if (pass !== confirmPass) {
+        showToast('Passwords do not match.');
+        return;
+    }
+
+    const accounts = getAdminAccounts();
+    if (accounts.some(a => a.email === email)) {
+        showView('create-account-error-msg');
+        return;
+    }
+    hideView('create-account-error-msg');
+
+    accounts.push({ email, passwordHash: await sha256(pass) });
+    saveAdminAccounts(accounts);
+
+    sessionStorage.setItem('dd_authenticated', 'true');
+    sessionStorage.setItem('dd_current_admin_email', email);
+
+    showToast(`Account created for ${email}!`);
+    document.getElementById('create-account-form').reset();
+    initAuth();
 }
 
 async function handleStaffLogin(e) {

@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -89,6 +89,29 @@
                         <button type="submit" class="btn primary-btn btn-block">Unlock Dashboard</button>
                         <div id="login-error-msg" class="error-text hidden">Incorrect email or password. Please try again.</div>
                     </form>
+                    <p class="auth-switch-link">New to the office dashboard? <a href="javascript:void(0)" onclick="showCreateAccountView()">Create new email &amp; password</a></p>
+                </div>
+
+                <div id="create-account-fields" class="hidden">
+                    <h2>Create New Account</h2>
+                    <p>Add your own office login (email + password). You'll see the same shared dashboard data as everyone else.</p>
+                    <form id="create-account-form">
+                        <div class="form-group">
+                            <label for="create-account-email">Email</label>
+                            <input type="email" id="create-account-email" placeholder="you@ddevents.com" required autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="create-account-password">Password</label>
+                            <input type="password" id="create-account-password" placeholder="Enter password" required minlength="4" autocomplete="new-password">
+                        </div>
+                        <div class="form-group">
+                            <label for="create-account-password-confirm">Confirm Password</label>
+                            <input type="password" id="create-account-password-confirm" placeholder="Re-enter password" required minlength="4" autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn primary-btn btn-block">Create Account</button>
+                        <div id="create-account-error-msg" class="error-text hidden">An account with this email already exists.</div>
+                    </form>
+                    <p class="auth-switch-link">Already have a login? <a href="javascript:void(0)" onclick="showAdminLoginView()">Back to login</a></p>
                 </div>
 
                 <div id="staff-login-fields" class="hidden">
@@ -1158,6 +1181,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>

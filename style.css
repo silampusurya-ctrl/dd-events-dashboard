@@ -435,6 +435,19 @@ textarea:focus {
     font-weight: bold;
 }
 
+.auth-switch-link {
+    margin-top: 18px !important;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.auth-switch-link a {
+    color: var(--primary-lavender);
+    font-weight: bold;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 .hidden {
     display: none !important;
 }
