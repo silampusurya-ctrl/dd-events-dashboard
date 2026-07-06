@@ -739,7 +739,12 @@ function renderAvailableEventsForStaff() {
     const container = document.getElementById('staff-available-events');
     if (!container) return;
 
-    const staffName = document.getElementById('worklog-staff-select').value;
+    // Applying no longer depends on picking a name from the registered staff
+    // dropdown above - anyone can type their own name here, so casual/new
+    // laborers don't need to be added to the Staff list first. We remember
+    // the last name they typed (this browser session only) so their
+    // pending/approved status still shows up if they revisit the page.
+    const myName = sessionStorage.getItem('dd_staff_applicant_name') || '';
     const events = getBookedEventsForStaff();
 
     if (events.length === 0) {
@@ -748,23 +753,23 @@ function renderAvailableEventsForStaff() {
     }
 
     container.innerHTML = events.map(evt => {
-        const myApplication = staffName
-            ? appState.staffApplications.find(a => a.eventId === evt.id && a.staffName === staffName)
+        const myApplication = myName
+            ? appState.staffApplications.find(a => a.eventId === evt.id && a.staffName.toLowerCase() === myName.toLowerCase())
             : null;
 
         let actionHTML;
-        if (!staffName) {
-            actionHTML = '<p class="text-muted" style="font-size: 0.85rem; margin-top: 10px;">Select your name above to apply.</p>';
-        } else if (myApplication && myApplication.status === 'approved') {
+        if (myApplication && myApplication.status === 'approved') {
             actionHTML = '<div class="stage-final-tag" style="margin-top: 10px;"><i class="fa-solid fa-circle-check"></i> Approved - you can come to work!</div>';
         } else if (myApplication && myApplication.status === 'pending') {
             actionHTML = '<div class="approval-status-tag pending"><i class="fa-solid fa-hourglass-half"></i> Pending Admin Approval</div>';
         } else if (myApplication && myApplication.status === 'rejected') {
             actionHTML = '<div class="approval-status-tag rejected"><i class="fa-solid fa-circle-xmark"></i> Not Selected for This Event</div>';
         } else {
+            const safeName = myName.replace(/"/g, '&quot;');
             actionHTML = `
                 <div class="apply-inline-form">
-                    <input type="tel" id="apply-phone-${evt.id}" placeholder="Your phone number" class="form-control">
+                    <input type="text" id="apply-name-${evt.id}" placeholder="Your name" class="form-control" value="${safeName}">
+                    <input type="tel" id="apply-phone-${evt.id}" placeholder="Your phone number" class="form-control" style="margin-top: 8px;">
                     <button class="btn primary-btn btn-block" style="margin-top: 8px;" onclick="applyForEventWork('${evt.id}')">
                         <i class="fa-solid fa-hand"></i> Apply to Work
                     </button>
@@ -785,20 +790,21 @@ function renderAvailableEventsForStaff() {
 }
 
 function applyForEventWork(eventId) {
-    const staffName = document.getElementById('worklog-staff-select').value;
+    const nameInput = document.getElementById(`apply-name-${eventId}`);
+    const phoneInput = document.getElementById(`apply-phone-${eventId}`);
+    const staffName = nameInput ? nameInput.value.trim() : '';
+    const phone = phoneInput ? phoneInput.value.trim() : '';
+
     if (!staffName) {
-        showToast('Please select your name first.');
+        showToast('Please enter your name first.');
         return;
     }
 
-    const alreadyApplied = appState.staffApplications.find(a => a.eventId === eventId && a.staffName === staffName);
+    const alreadyApplied = appState.staffApplications.find(a => a.eventId === eventId && a.staffName.toLowerCase() === staffName.toLowerCase());
     if (alreadyApplied) {
         showToast('You have already applied for this event.');
         return;
     }
-
-    const phoneInput = document.getElementById(`apply-phone-${eventId}`);
-    const phone = phoneInput ? phoneInput.value.trim() : '';
 
     appState.staffApplications.push({
         id: 'app_' + Date.now(),
@@ -810,6 +816,7 @@ function applyForEventWork(eventId) {
         decidedAt: null
     });
 
+    sessionStorage.setItem('dd_staff_applicant_name', staffName);
     saveState();
     showToast('Application submitted! Waiting for admin approval.');
     renderAvailableEventsForStaff();
