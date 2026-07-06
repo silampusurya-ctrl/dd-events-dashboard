@@ -102,10 +102,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initAuth();
 
     // Set up form submission handlers
-    document.getElementById('setup-password-form').addEventListener('submit', handleSetupPassword);
     document.getElementById('login-password-form').addEventListener('submit', handleLoginPassword);
     document.getElementById('staff-login-form').addEventListener('submit', handleStaffLogin);
-    document.getElementById('setup-staff-login-form').addEventListener('submit', handleSetupStaffLogin);
     document.getElementById('create-account-form').addEventListener('submit', handleCreateAdminAccount);
 
     registerServiceWorker();
@@ -175,43 +173,19 @@ async function triggerAppInstall() {
 }
 
 // ==========================================
-// 1. AUTHENTICATION MODULE
+// 1. AUTHENTICATION MODULE (Supabase Auth - real accounts, work on any device)
 // ==========================================
 
-// Admin accounts: an array of { email, passwordHash } stored locally on this
-// device. Every account shares the same appState data - this just lets each
-// person in the office log in with their own email + password.
-function getAdminAccounts() {
-    migrateLegacyMasterPassword();
-    const data = localStorage.getItem('dd_admin_accounts');
-    try {
-        return data ? JSON.parse(data) : [];
-    } catch (e) {
-        return [];
-    }
-}
+const SUPABASE_URL = 'https://razwvjgajaparzjksoll.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJhend2amdhamFwYXJ6amtzb2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMDM0NDMsImV4cCI6MjA5ODg3OTQ0M30.cWqUkKcf6WHs0srbvIqx58kMqSiBXU9NdZy8SBus1OQ';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-function saveAdminAccounts(accounts) {
-    localStorage.setItem('dd_admin_accounts', JSON.stringify(accounts));
-}
-
-// One-time migration: older versions of this app used a single shared
-// "master password" instead of per-person accounts. Turn that into the
-// first admin account so existing installs keep working.
-function migrateLegacyMasterPassword() {
-    const legacyHash = localStorage.getItem('dd_master_password_hash');
-    if (!legacyHash) return;
-
-    const hasAccounts = localStorage.getItem('dd_admin_accounts') !== null;
-    if (!hasAccounts) {
-        saveAdminAccounts([{ email: 'admin@ddevents.local', passwordHash: legacyHash }]);
-    }
-    localStorage.removeItem('dd_master_password_hash');
-}
+// Set once a real Supabase session is confirmed - used for display and for
+// "you can't remove your own account" checks. Supabase itself persists the
+// actual session token, so this app no longer needs its own auth flags.
+let currentAdminEmail = null;
 
 async function initAuth() {
-    const hasPassword = getAdminAccounts().length > 0;
-    const isAuthenticated = sessionStorage.getItem('dd_authenticated') === 'true';
     const isStaffAuthenticated = sessionStorage.getItem('dd_staff_authenticated') === 'true';
 
     if (isStaffAuthenticated) {
@@ -222,31 +196,42 @@ async function initAuth() {
         return;
     }
 
-    if (!hasPassword) {
-        showView('auth-container');
-        showView('password-setup-view');
-        hideView('password-login-view');
-        hideView('app-container');
-        hideView('staff-app-container');
-        setSetupMode('admin');
-    } else if (!isAuthenticated) {
-        showView('auth-container');
-        hideView('password-setup-view');
-        showView('password-login-view');
-        hideView('app-container');
-        hideView('staff-app-container');
-        setAuthMode('admin');
-    } else {
+    showView('auth-container');
+    hideView('app-container');
+    hideView('staff-app-container');
+    hideView('password-login-view');
+    showView('auth-loading-view');
+
+    const { data: { session } } = await sb.auth.getSession();
+
+    if (session && session.user) {
+        await loadState();
+        const email = session.user.email.toLowerCase();
+
+        if ((appState.disabledAdminEmails || []).includes(email)) {
+            await sb.auth.signOut();
+            showToast('This account has been disabled by your admin.');
+            hideView('auth-loading-view');
+            initAuth();
+            return;
+        }
+
+        currentAdminEmail = email;
+        hideView('auth-loading-view');
         hideView('auth-container');
         hideView('staff-app-container');
         showView('app-container');
         await startApplication();
+    } else {
+        hideView('auth-loading-view');
+        showView('password-login-view');
+        setAuthMode('admin');
     }
 }
 
 // Toggles the login screen between the office/admin login form and the
 // staff portal login form. Both share the same physical screen so staff
-// never need to know (or see) the admin master password.
+// never need to know (or see) the admin password.
 function setAuthMode(mode) {
     const isAdmin = mode === 'admin';
     document.getElementById('mode-admin-btn').classList.toggle('active', isAdmin);
@@ -256,27 +241,9 @@ function setAuthMode(mode) {
     document.getElementById('admin-login-fields').classList.toggle('hidden', !isAdmin);
 
     if (isAdmin) {
-        document.getElementById('login-password').focus();
+        document.getElementById('login-email').focus();
     } else {
         document.getElementById('staff-login-password').focus();
-    }
-}
-
-// Same admin/staff toggle as setAuthMode(), but for the very first-run
-// screen (no admin account exists on this device yet) - so a staff member
-// opening the app on a brand-new phone can still reach the Staff Portal
-// without needing an admin account to exist locally first.
-function setSetupMode(mode) {
-    const isAdmin = mode === 'admin';
-    document.getElementById('setup-mode-admin-btn').classList.toggle('active', isAdmin);
-    document.getElementById('setup-mode-staff-btn').classList.toggle('active', !isAdmin);
-    document.getElementById('setup-admin-fields').classList.toggle('hidden', !isAdmin);
-    document.getElementById('setup-staff-fields').classList.toggle('hidden', isAdmin);
-
-    if (isAdmin) {
-        document.getElementById('setup-email').focus();
-    } else {
-        document.getElementById('setup-staff-login-password').focus();
     }
 }
 
@@ -296,6 +263,18 @@ function showAdminLoginView() {
     document.getElementById('login-email').focus();
 }
 
+// Supabase Auth has no client-safe way to list every registered user, so we
+// keep our own roster of known admin emails inside the shared data blob -
+// just for showing/managing the list in Settings.
+async function registerAdminEmailInRoster(email) {
+    await loadState();
+    if (!appState.adminEmails) appState.adminEmails = [];
+    if (!appState.adminEmails.includes(email)) {
+        appState.adminEmails.push(email);
+        await saveState();
+    }
+}
+
 async function handleCreateAdminAccount(e) {
     e.preventDefault();
     const email = document.getElementById('create-account-email').value.trim().toLowerCase();
@@ -312,65 +291,54 @@ async function handleCreateAdminAccount(e) {
         return;
     }
 
-    const accounts = getAdminAccounts();
-    if (accounts.some(a => a.email === email)) {
+    hideView('create-account-error-msg');
+    const { data, error } = await sb.auth.signUp({ email, password: pass });
+
+    if (error) {
+        showToast(error.message);
+        return;
+    }
+    // Supabase quirk: signing up with an email that already has an account
+    // returns a user object with no identities, instead of a clear error.
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
         showView('create-account-error-msg');
         return;
     }
-    hideView('create-account-error-msg');
 
-    accounts.push({ email, passwordHash: await sha256(pass) });
-    saveAdminAccounts(accounts);
-
-    sessionStorage.setItem('dd_authenticated', 'true');
-    sessionStorage.setItem('dd_current_admin_email', email);
-
+    await registerAdminEmailInRoster(email);
     showToast(`Account created for ${email}!`);
     document.getElementById('create-account-form').reset();
     initAuth();
 }
 
-// Shared by both staff-login forms (the toggle on the regular login screen,
-// and the toggle on the very first-run setup screen) since they're
-// functionally identical - just different input/error element IDs.
-async function attemptStaffLogin(passwordInputId, errorMsgId) {
-    const storedHash = localStorage.getItem('dd_staff_password_hash');
-    const passwordInput = document.getElementById(passwordInputId);
+async function handleStaffLogin(e) {
+    e.preventDefault();
+    const passwordInput = document.getElementById('staff-login-password');
 
-    if (!storedHash) {
+    const { data, error: fetchError } = await sb.from('dashboard_data').select('staff_password_hash').eq('id', 1).single();
+
+    if (fetchError || !data || !data.staff_password_hash) {
         showToast('Staff access has not been set up yet. Please contact your admin.');
         return;
     }
 
-    const entered = passwordInput.value;
-    const enteredHash = await sha256(entered);
+    const enteredHash = await sha256(passwordInput.value);
 
-    if (enteredHash === storedHash) {
+    if (enteredHash === data.staff_password_hash) {
         sessionStorage.setItem('dd_staff_authenticated', 'true');
-        hideView(errorMsgId);
+        hideView('staff-login-error-msg');
         passwordInput.value = '';
         initAuth();
     } else {
-        showView(errorMsgId);
+        showView('staff-login-error-msg');
         passwordInput.value = '';
         passwordInput.focus();
     }
 }
 
-async function handleStaffLogin(e) {
-    e.preventDefault();
-    await attemptStaffLogin('staff-login-password', 'staff-login-error-msg');
-}
-
-async function handleSetupStaffLogin(e) {
-    e.preventDefault();
-    await attemptStaffLogin('setup-staff-login-password', 'setup-staff-login-error-msg');
-}
-
 async function setStaffPassword() {
     const pass = document.getElementById('staff-pass-input').value;
     const confirmPass = document.getElementById('staff-pass-confirm-input').value;
-    const isChange = localStorage.getItem('dd_staff_password_hash') !== null;
 
     if (pass.length < 4) {
         showToast('Staff password must be at least 4 characters long.');
@@ -383,19 +351,26 @@ async function setStaffPassword() {
     }
 
     const hash = await sha256(pass);
-    localStorage.setItem('dd_staff_password_hash', hash);
-    showToast(isChange ? 'Staff portal password changed!' : 'Staff portal password created!');
+    const { error } = await sb.from('dashboard_data').update({ staff_password_hash: hash }).eq('id', 1);
+
+    if (error) {
+        showToast('Failed to save staff password.');
+        return;
+    }
+
+    showToast('Staff portal password saved!');
     document.getElementById('staff-password-form').reset();
     loadStaffPasswordStatus();
 }
 
-function loadStaffPasswordStatus() {
+async function loadStaffPasswordStatus() {
     const statusEl = document.getElementById('staff-password-status');
     const labelEl = document.getElementById('staff-pass-input-label');
     const submitBtn = document.getElementById('staff-pass-submit-btn');
     if (!statusEl) return;
 
-    const hasStaffPassword = localStorage.getItem('dd_staff_password_hash') !== null;
+    const { data } = await sb.from('dashboard_data').select('staff_password_hash').eq('id', 1).single();
+    const hasStaffPassword = !!(data && data.staff_password_hash);
 
     statusEl.textContent = hasStaffPassword
         ? 'Staff portal password is set. Share it only with your staff.'
@@ -417,7 +392,8 @@ function staffLogout() {
     initAuth();
 }
 
-// SHA-256 Hashing helper using Web Crypto API
+// SHA-256 Hashing helper using Web Crypto API - still used for the shared
+// staff portal password, which isn't a real per-person Supabase account.
 async function sha256(message) {
     const msgBuffer = new TextEncoder().encode(message);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -425,42 +401,14 @@ async function sha256(message) {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function handleSetupPassword(e) {
-    e.preventDefault();
-    const email = document.getElementById('setup-email').value.trim().toLowerCase();
-    const newPass = document.getElementById('new-password').value;
-    const confirmPass = document.getElementById('confirm-password').value;
-
-    if (newPass.length < 4) {
-        showToast('Password must be at least 4 characters long.');
-        return;
-    }
-
-    if (newPass !== confirmPass) {
-        showToast('Passwords do not match.');
-        return;
-    }
-
-    const hash = await sha256(newPass);
-    saveAdminAccounts([{ email, passwordHash: hash }]);
-    sessionStorage.setItem('dd_authenticated', 'true');
-    sessionStorage.setItem('dd_current_admin_email', email);
-
-    showToast('Admin account created!');
-    initAuth();
-}
-
 async function handleLoginPassword(e) {
     e.preventDefault();
     const email = document.getElementById('login-email').value.trim().toLowerCase();
     const enteredPass = document.getElementById('login-password').value;
-    const enteredHash = await sha256(enteredPass);
 
-    const account = getAdminAccounts().find(a => a.email === email);
+    const { error } = await sb.auth.signInWithPassword({ email, password: enteredPass });
 
-    if (account && account.passwordHash === enteredHash) {
-        sessionStorage.setItem('dd_authenticated', 'true');
-        sessionStorage.setItem('dd_current_admin_email', account.email);
+    if (!error) {
         hideView('login-error-msg');
         document.getElementById('login-password').value = '';
         initAuth();
@@ -474,14 +422,12 @@ async function handleLoginPassword(e) {
 async function changeMyPassword() {
     const oldPass = document.getElementById('old-pass').value;
     const changePass = document.getElementById('change-pass').value;
-    const currentEmail = sessionStorage.getItem('dd_current_admin_email');
 
-    const accounts = getAdminAccounts();
-    const account = accounts.find(a => a.email === currentEmail);
-    if (!account) return;
-
-    const oldHash = await sha256(oldPass);
-    if (oldHash !== account.passwordHash) {
+    // Re-verify the current password first - Supabase's updateUser() doesn't
+    // require it, but we don't want anyone at an unlocked computer to change
+    // the password without knowing the existing one.
+    const { error: verifyError } = await sb.auth.signInWithPassword({ email: currentAdminEmail, password: oldPass });
+    if (verifyError) {
         showToast('Current password incorrect.');
         return;
     }
@@ -491,13 +437,21 @@ async function changeMyPassword() {
         return;
     }
 
-    account.passwordHash = await sha256(changePass);
-    saveAdminAccounts(accounts);
+    const { error } = await sb.auth.updateUser({ password: changePass });
+    if (error) {
+        showToast(error.message);
+        return;
+    }
+
     showToast('Password updated successfully!');
     document.getElementById('change-password-form').reset();
 }
 
-// Adds another office login (email + password) from Settings -> Admin Accounts.
+// Adds another office login (email + password) from Settings -> Admin
+// Accounts. Supabase's client SDK signs the current browser INTO the newly
+// created account (there's no safe client-side way around that without
+// exposing the service_role key) - so we sign back out right after and ask
+// the admin to log back into their own account.
 async function addAdminAccount() {
     const email = document.getElementById('new-admin-email').value.trim().toLowerCase();
     const pass = document.getElementById('new-admin-password').value;
@@ -513,35 +467,46 @@ async function addAdminAccount() {
         return;
     }
 
-    const accounts = getAdminAccounts();
-    if (accounts.some(a => a.email === email)) {
+    const { data, error } = await sb.auth.signUp({ email, password: pass });
+
+    if (error) {
+        showToast(error.message);
+        return;
+    }
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
         showToast('An account with this email already exists.');
         return;
     }
 
-    accounts.push({ email, passwordHash: await sha256(pass) });
-    saveAdminAccounts(accounts);
-    showToast(`Admin account added for ${email}.`);
-    document.getElementById('add-admin-form').reset();
-    renderAdminAccountsList();
+    await registerAdminEmailInRoster(email);
+    await sb.auth.signOut();
+    showToast(`Account created for ${email}! Please log back in with your own account.`);
+    initAuth();
 }
 
-function deleteAdminAccount(email) {
-    const accounts = getAdminAccounts();
+async function deleteAdminAccount(email) {
+    await loadState();
+    const roster = appState.adminEmails || [];
 
-    if (accounts.length <= 1) {
+    if (roster.length <= 1) {
         showToast('You need at least one admin account.');
         return;
     }
 
-    if (email === sessionStorage.getItem('dd_current_admin_email')) {
+    if (email === currentAdminEmail) {
         showToast("You can't remove the account you're currently logged in with.");
         return;
     }
 
     if (!confirm(`Remove admin account "${email}"?`)) return;
 
-    saveAdminAccounts(accounts.filter(a => a.email !== email));
+    if (!appState.disabledAdminEmails) appState.disabledAdminEmails = [];
+    if (!appState.disabledAdminEmails.includes(email)) {
+        appState.disabledAdminEmails.push(email);
+    }
+    appState.adminEmails = roster.filter(e => e !== email);
+    await saveState();
+
     showToast('Admin account removed.');
     renderAdminAccountsList();
 }
@@ -550,56 +515,52 @@ function renderAdminAccountsList() {
     const container = document.getElementById('admin-accounts-list');
     if (!container) return;
 
-    const accounts = getAdminAccounts();
-    const currentEmail = sessionStorage.getItem('dd_current_admin_email');
+    const roster = appState.adminEmails || [];
 
-    container.innerHTML = accounts.map(a => `
+    container.innerHTML = roster.map(email => `
         <div class="admin-account-row">
             <span class="admin-account-email">
-                <i class="fa-solid fa-user-tie"></i> ${a.email}
-                ${a.email === currentEmail ? '<span class="admin-account-you-tag">You</span>' : ''}
+                <i class="fa-solid fa-user-tie"></i> ${email}
+                ${email === currentAdminEmail ? '<span class="admin-account-you-tag">You</span>' : ''}
             </span>
-            ${accounts.length > 1 && a.email !== currentEmail
-                ? `<button class="action-icon-btn danger" title="Remove account" onclick="deleteAdminAccount('${a.email}')"><i class="fa-solid fa-trash"></i></button>`
+            ${roster.length > 1 && email !== currentAdminEmail
+                ? `<button class="action-icon-btn danger" title="Remove account" onclick="deleteAdminAccount('${email}')"><i class="fa-solid fa-trash"></i></button>`
                 : ''}
         </div>
     `).join('');
 
-    document.getElementById('current-admin-name').textContent = currentEmail || 'Administrator';
+    document.getElementById('current-admin-name').textContent = currentAdminEmail || 'Administrator';
 }
 
 function logout() {
-    sessionStorage.removeItem('dd_authenticated');
-    sessionStorage.removeItem('dd_current_admin_email');
+    sb.auth.signOut();
+    currentAdminEmail = null;
     appState = { events: [], staff: [], attendance: [], workLogs: [], staffApplications: [], webhooks: {} };
     initAuth();
 }
 
 // ==========================================
-// 2. STATE & STORAGE MANAGEMENT
+// 2. STATE & STORAGE MANAGEMENT (Supabase - one shared row, works from any device)
 // ==========================================
 
-function loadState() {
-    const data = localStorage.getItem('dd_dashboard_state');
-    if (data) {
-        try {
-            appState = JSON.parse(data);
-            if (!appState.webhooks) {
-                appState.webhooks = { url: '', triggers: { inquiry: true, payment: true, attendance: true } };
-            }
-            if (!appState.workLogs) {
-                appState.workLogs = [];
-            }
-            if (!appState.staffApplications) {
-                appState.staffApplications = [];
-            }
-        } catch (e) {
-            console.error('Failed to parse appState data', e);
-            initDefaultState();
-        }
-    } else {
+async function loadState() {
+    const { data, error } = await sb.from('dashboard_data').select('data').eq('id', 1).single();
+
+    if (error || !data) {
+        console.error('Failed to load shared data', error);
         initDefaultState();
+        return;
     }
+
+    appState = data.data || {};
+    if (!appState.webhooks) appState.webhooks = { url: '', triggers: { inquiry: true, payment: true, attendance: true } };
+    if (!appState.events) appState.events = [];
+    if (!appState.staff) appState.staff = [];
+    if (!appState.attendance) appState.attendance = [];
+    if (!appState.workLogs) appState.workLogs = [];
+    if (!appState.staffApplications) appState.staffApplications = [];
+    if (!appState.adminEmails) appState.adminEmails = [];
+    if (!appState.disabledAdminEmails) appState.disabledAdminEmails = [];
 }
 
 function initDefaultState() {
@@ -609,6 +570,8 @@ function initDefaultState() {
         attendance: [],
         workLogs: [],
         staffApplications: [],
+        adminEmails: [],
+        disabledAdminEmails: [],
         webhooks: {
             url: '',
             triggers: { inquiry: true, payment: true, attendance: true }
@@ -617,8 +580,11 @@ function initDefaultState() {
     saveState();
 }
 
-function saveState() {
-    localStorage.setItem('dd_dashboard_state', JSON.stringify(appState));
+async function saveState() {
+    const { error } = await sb.from('dashboard_data').update({ data: appState, updated_at: new Date().toISOString() }).eq('id', 1);
+    if (error) {
+        console.error('Failed to save shared data', error);
+    }
 }
 
 // ==========================================
@@ -626,11 +592,11 @@ function saveState() {
 // ==========================================
 
 async function startApplication() {
-    loadState();
+    // appState is already loaded by initAuth() before this runs.
     populatePresetServicePickers();
     switchTab('dashboard');
     refreshAllViews();
-    document.getElementById('current-admin-name').textContent = sessionStorage.getItem('dd_current_admin_email') || 'Administrator';
+    renderAdminAccountsList();
 
     const today = getTodayDateString();
     document.getElementById('event-date').value = today;
@@ -643,7 +609,7 @@ async function startApplication() {
 // ==========================================
 
 async function startStaffPortal() {
-    loadState();
+    await loadState();
     populateWorklogStaffSelect();
     document.getElementById('worklog-date').value = getTodayDateString();
     document.getElementById('worklog-time').value = getCurrentTimeString();
@@ -2431,8 +2397,8 @@ async function testWebhook() {
 // 10. BACKUP & DATA RECOVERY MODULE
 // ==========================================
 
-function exportDataBackup() {
-    loadState();
+async function exportDataBackup() {
+    await loadState();
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 4));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
@@ -2451,16 +2417,16 @@ function importDataBackup(event) {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             const parsedData = JSON.parse(e.target.result);
-            
+
             if (parsedData.events && parsedData.staff && parsedData.attendance) {
                 appState = parsedData;
-                saveState();
+                await saveState();
                 showToast('Backup restored successfully!');
                 document.getElementById('import-file').value = '';
-                startApplication();
+                await startApplication();
             } else {
                 showToast('Invalid backup file structure.');
             }
