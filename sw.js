@@ -3,7 +3,7 @@
 // back to cache only when offline. This also satisfies the "has a fetch
 // handler" requirement browsers use to decide an app is installable.
 
-const CACHE_NAME = 'dd-events-cache-v6';
+const CACHE_NAME = 'dd-events-cache-v7';
 const APP_SHELL = [
     './',
     './index.html',
@@ -45,5 +45,43 @@ self.addEventListener('fetch', (event) => {
                 return response;
             })
             .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html')))
+    );
+});
+
+// Web Push - shows a home-screen/system notification for events pushed from
+// the Supabase Edge Function (e.g. "New event booked, apply now").
+self.addEventListener('push', (event) => {
+    let payload = { title: 'DD Events', body: 'You have a new update.', url: './' };
+    try {
+        if (event.data) payload = { ...payload, ...event.data.json() };
+    } catch (e) {
+        // ignore malformed payloads
+    }
+
+    event.waitUntil(
+        self.registration.showNotification(payload.title, {
+            body: payload.body,
+            icon: './icons/icon-192.png',
+            badge: './icons/icon-96.png',
+            data: { url: payload.url || './' }
+        })
+    );
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const targetUrl = (event.notification.data && event.notification.data.url) || './';
+
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsList) => {
+            for (const client of clientsList) {
+                if (client.url.includes(self.registration.scope) && 'focus' in client) {
+                    return client.focus();
+                }
+            }
+            if (self.clients.openWindow) {
+                return self.clients.openWindow(targetUrl);
+            }
+        })
     );
 });

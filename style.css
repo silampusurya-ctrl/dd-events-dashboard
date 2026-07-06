@@ -336,6 +336,20 @@ textarea:focus {
     gap: 10px;
 }
 
+.staff-notify-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    background: rgba(123, 44, 191, 0.06);
+    border: 1px dashed var(--primary-soft);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    font-size: 0.9rem;
+}
+
 /* Auth / Password screen */
 .auth-wrapper {
     display: flex;

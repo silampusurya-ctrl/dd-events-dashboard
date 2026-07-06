@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=10">
+    <link rel="stylesheet" href="style.css?v=11">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -131,6 +131,12 @@
                     <option value="">-- Select your name --</option>
                 </select>
             </div>
+
+            <div id="staff-notify-banner" class="staff-notify-banner hidden">
+                <span><i class="fa-solid fa-bell"></i> Get a notification on this phone when a new event is booked.</span>
+                <button class="btn primary-btn" onclick="enableStaffNotifications()"><i class="fa-solid fa-bell"></i> Enable Notifications</button>
+            </div>
+            <p id="staff-notify-status" class="text-muted" style="font-size: 0.85rem; margin-bottom: 16px;"></p>
 
             <h3><i class="fa-solid fa-calendar-check"></i> Booked Events - Apply to Work</h3>
             <p class="stage-desc">These events have their date booked (advance received). Apply to let admin know you're available - admin will approve who works on it, and you'll see the confirmation here.</p>
@@ -1168,6 +1174,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=14"></script>
 </body>
 </html>

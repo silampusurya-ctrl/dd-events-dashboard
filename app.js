@@ -95,6 +95,11 @@ function advanceEventStage(eventId) {
     saveState();
     showToast(`Moved to "${getStageLabel(evt.status)}" stage.`);
     refreshAllViews();
+
+    // Alert staff the moment a date gets locked in, so they can apply to work it.
+    if (evt.status === 'advance-paid') {
+        notifyStaffOfBookedEvent(evt);
+    }
 }
 
 // Initialize on page load
@@ -615,6 +620,114 @@ async function startStaffPortal() {
     document.getElementById('worklog-time').value = getCurrentTimeString();
     renderMyWorkLogs();
     renderAvailableEventsForStaff();
+    refreshStaffNotifyUI();
+}
+
+// ==========================================
+// 3C. PUSH NOTIFICATIONS - staff get a home-screen alert when a new event
+// gets its date booked (reaches the "Advance Pay / Date Booked" stage).
+// ==========================================
+
+const VAPID_PUBLIC_KEY = 'BGwJ1GXScekbfhwx1WQDsF6LLpwAmKd84bmP_3SSnA9E3xAPqB03HjhBW166OjtyUuxw1_xZhLuFXrLc-P8cdFE';
+
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+// Shows the "Enable Notifications" banner or a status line depending on
+// whether push is supported/already enabled on this device/browser.
+async function refreshStaffNotifyUI() {
+    const banner = document.getElementById('staff-notify-banner');
+    const statusEl = document.getElementById('staff-notify-status');
+    if (!banner || !statusEl) return;
+
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        hideView('staff-notify-banner');
+        statusEl.textContent = '';
+        return;
+    }
+
+    if (Notification.permission === 'denied') {
+        hideView('staff-notify-banner');
+        statusEl.textContent = 'Notifications are blocked in your browser settings - enable them there to get booking alerts.';
+        return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const existingSub = await registration.pushManager.getSubscription();
+
+    if (existingSub) {
+        hideView('staff-notify-banner');
+        statusEl.textContent = 'Notifications are ON - you\'ll be alerted here when a new event is booked.';
+    } else {
+        showView('staff-notify-banner');
+        statusEl.textContent = '';
+    }
+}
+
+async function enableStaffNotifications() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        showToast('Push notifications are not supported on this browser.');
+        return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+        showToast('Notification permission was not granted.');
+        return;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+        }
+
+        const subJson = subscription.toJSON();
+        const staffName = sessionStorage.getItem('dd_staff_applicant_name') || document.getElementById('worklog-staff-select').value || '';
+
+        await sb.from('push_subscriptions').upsert({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+            subscriber_name: staffName,
+            subscriber_role: 'staff'
+        }, { onConflict: 'endpoint' });
+
+        showToast('Notifications enabled! You\'ll be alerted when a new event is booked.');
+        refreshStaffNotifyUI();
+    } catch (err) {
+        console.error('Push subscription failed', err);
+        showToast('Could not enable notifications on this device.');
+    }
+}
+
+// Fires a push notification to every subscribed staff device. Called once
+// an event crosses INTO the "Advance Pay / Date Booked" stage.
+async function notifyStaffOfBookedEvent(evt) {
+    try {
+        await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({
+                title: 'New Event Booked!',
+                body: `${evt.serviceType} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`,
+                url: './'
+            })
+        });
+    } catch (err) {
+        console.error('Failed to send staff notification', err);
+    }
 }
 
 function populateWorklogStaffSelect() {
