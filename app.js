@@ -113,7 +113,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     registerServiceWorker();
     setupInstallPrompt();
+    setupRefreshOnResume();
 });
+
+// When someone switches away from the app (minimizes it, switches tabs/apps)
+// and comes back, refetch the shared data immediately so approval status
+// changes made elsewhere (e.g. admin approving/rejecting a work application)
+// show up right away instead of only after a manual reload.
+function setupRefreshOnResume() {
+    const refresh = async () => {
+        if (document.visibilityState !== 'visible') return;
+
+        const isStaffAuthenticated = sessionStorage.getItem('dd_staff_authenticated') === 'true';
+        if (isStaffAuthenticated) {
+            await loadState();
+            renderMyWorkLogs();
+            renderAvailableEventsForStaff();
+            return;
+        }
+
+        const { data: { session } } = await sb.auth.getSession();
+        if (session && session.user) {
+            await loadState();
+            refreshAllViews();
+        }
+    };
+
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+}
 
 // ==========================================
 // 0. PWA - INSTALLABLE APP (service worker + "Add to Home Screen" prompt)
