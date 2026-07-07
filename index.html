@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=12">
+    <link rel="stylesheet" href="style.css?v=13">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -1075,6 +1075,21 @@
                         </div>
                     </div>
 
+                    <!-- App Notifications (admin side) -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-bell text-lavender"></i> App Notifications</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>Get a home-screen notification on this device for important updates - a new event getting booked, a staff work request, or an approval decision.</p>
+                            <div id="admin-notify-banner" class="staff-notify-banner hidden">
+                                <span><i class="fa-solid fa-bell"></i> Turn on notifications for bookings, requests, and approvals.</span>
+                                <button class="btn primary-btn" onclick="enableAdminNotifications()"><i class="fa-solid fa-bell"></i> Enable Notifications</button>
+                            </div>
+                            <p id="admin-notify-status" class="text-muted" style="font-size: 0.85rem;"></p>
+                        </div>
+                    </div>
+
                     <!-- Staff Portal Access -->
                     <div class="dashboard-card">
                         <div class="card-header">
@@ -1179,6 +1194,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=16"></script>
+    <script src="app.js?v=17"></script>
 </body>
 </html>

@@ -630,6 +630,7 @@ async function startApplication() {
     switchTab('dashboard');
     refreshAllViews();
     renderAdminAccountsList();
+    refreshAdminNotifyUI();
 
     const today = getTodayDateString();
     document.getElementById('event-date').value = today;
@@ -737,9 +738,81 @@ async function enableStaffNotifications() {
     }
 }
 
-// Fires a push notification to every subscribed staff device. Called once
-// an event crosses INTO the "Advance Pay / Date Booked" stage.
-async function notifyStaffOfBookedEvent(evt) {
+// Same as the staff notification opt-in above, but for the admin dashboard
+// (Settings page) - so admins also get alerted for bookings, work requests,
+// and approval updates, not just staff.
+async function refreshAdminNotifyUI() {
+    const banner = document.getElementById('admin-notify-banner');
+    const statusEl = document.getElementById('admin-notify-status');
+    if (!banner || !statusEl) return;
+
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        hideView('admin-notify-banner');
+        statusEl.textContent = '';
+        return;
+    }
+
+    if (Notification.permission === 'denied') {
+        hideView('admin-notify-banner');
+        statusEl.textContent = 'Notifications are blocked in your browser settings - enable them there to get alerts.';
+        return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const existingSub = await registration.pushManager.getSubscription();
+
+    if (existingSub) {
+        hideView('admin-notify-banner');
+        statusEl.textContent = 'Notifications are ON - you\'ll be alerted here for bookings, work requests, and approvals.';
+    } else {
+        showView('admin-notify-banner');
+        statusEl.textContent = '';
+    }
+}
+
+async function enableAdminNotifications() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        showToast('Push notifications are not supported on this browser.');
+        return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+        showToast('Notification permission was not granted.');
+        return;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+        }
+
+        const subJson = subscription.toJSON();
+
+        await sb.from('push_subscriptions').upsert({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+            subscriber_name: currentAdminEmail || '',
+            subscriber_role: 'admin'
+        }, { onConflict: 'endpoint' });
+
+        showToast('Notifications enabled! You\'ll be alerted for bookings, requests, and approvals.');
+        refreshAdminNotifyUI();
+    } catch (err) {
+        console.error('Push subscription failed', err);
+        showToast('Could not enable notifications on this device.');
+    }
+}
+
+// Broadcasts a push notification to every subscribed device - both staff and
+// admin, since booking/request/approval updates all matter to both sides.
+async function sendPushBroadcast(title, body) {
     try {
         await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
             method: 'POST',
@@ -747,15 +820,33 @@ async function notifyStaffOfBookedEvent(evt) {
                 'Content-Type': 'application/json',
                 'apikey': SUPABASE_ANON_KEY
             },
-            body: JSON.stringify({
-                title: 'New Event Booked!',
-                body: `${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`,
-                url: './'
-            })
+            body: JSON.stringify({ title, body, url: './' })
         });
     } catch (err) {
-        console.error('Failed to send staff notification', err);
+        console.error('Failed to send push notification', err);
     }
+}
+
+async function notifyStaffOfBookedEvent(evt) {
+    await sendPushBroadcast(
+        'New Event Booked!',
+        `${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`
+    );
+}
+
+async function notifyAdminOfWorkRequest(evt, staffName) {
+    await sendPushBroadcast(
+        'New Work Request',
+        `${staffName} wants to work on ${evt.clientName} - ${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)}.`
+    );
+}
+
+async function notifyStaffOfApprovalDecision(evt, staffName, decision) {
+    const decisionText = decision === 'approved' ? 'approved - you can come to work!' : 'not selected this time.';
+    await sendPushBroadcast(
+        decision === 'approved' ? 'Work Request Approved!' : 'Work Request Update',
+        `${staffName}, your request for ${evt.clientName} (${formatDisplayDate(evt.eventDate)}) was ${decisionText}`
+    );
 }
 
 function populateWorklogStaffSelect() {
@@ -976,6 +1067,9 @@ function applyForEventWork(eventId) {
     saveState();
     showToast('Application submitted! Waiting for admin approval.');
     renderAvailableEventsForStaff();
+
+    const evt = appState.events.find(e => e.id === eventId);
+    if (evt) notifyAdminOfWorkRequest(evt, staffName);
 }
 
 // Admin-side: every staff application across every event, newest first.
@@ -1038,6 +1132,9 @@ function decideStaffApplication(appId, decision) {
     saveState();
     showToast(decision === 'approved' ? 'Staff approved for this event.' : 'Staff application rejected.');
     renderEventApprovals();
+
+    const evt = appState.events.find(e => e.id === application.eventId);
+    if (evt) notifyStaffOfApprovalDecision(evt, application.staffName, decision);
 }
 
 function filterEventApprovals() {
@@ -1159,6 +1256,7 @@ function switchTab(tabId) {
     } else if (tabId === 'settings') {
         loadStaffPasswordStatus();
         renderAdminAccountsList();
+        refreshAdminNotifyUI();
     }
     
     hideView('notification-dropdown');
