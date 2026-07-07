@@ -721,7 +721,7 @@ async function notifyStaffOfBookedEvent(evt) {
             },
             body: JSON.stringify({
                 title: 'New Event Booked!',
-                body: `${evt.serviceType} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`,
+                body: `${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`,
                 url: './'
             })
         });
@@ -848,6 +848,17 @@ function getBookedEventsForStaff() {
         .sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
 }
 
+// The "Primary Service Type" (e.g. "Full Wedding Planning") only labels the
+// overall booking - it doesn't say what work is actually involved. Staff
+// need to see every individual service line added to the quotation
+// (Decoration, Catering, Photography, etc.) so they know what the job is.
+function getEventServiceDescriptions(evt) {
+    if (evt.items && evt.items.length > 0) {
+        return evt.items.map(item => item.desc);
+    }
+    return [evt.serviceType];
+}
+
 function renderAvailableEventsForStaff() {
     const container = document.getElementById('staff-available-events');
     if (!container) return;
@@ -896,6 +907,10 @@ function renderAvailableEventsForStaff() {
                 <p><i class="fa-solid fa-calendar-day"></i> ${formatDisplayDate(evt.eventDate)}</p>
                 <p><i class="fa-solid fa-location-dot"></i> ${evt.venue || 'Venue not set'}</p>
                 <p><i class="fa-solid fa-tags"></i> ${evt.serviceType}</p>
+                <div class="event-services-list">
+                    <strong>Services included:</strong>
+                    <ul>${getEventServiceDescriptions(evt).map(desc => `<li>${desc}</li>`).join('')}</ul>
+                </div>
                 ${actionHTML}
             </div>
         `;
