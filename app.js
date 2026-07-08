@@ -421,7 +421,8 @@ async function loadStaffPasswordStatus() {
 
 function staffLogout() {
     sessionStorage.removeItem('dd_staff_authenticated');
-    sessionStorage.removeItem('dd_staff_selected_name');
+    localStorage.removeItem('dd_staff_selected_name');
+    localStorage.removeItem('dd_staff_applicant_name');
     initAuth();
 }
 
@@ -721,7 +722,7 @@ async function enableStaffNotifications() {
         }
 
         const subJson = subscription.toJSON();
-        const staffName = sessionStorage.getItem('dd_staff_applicant_name') || document.getElementById('worklog-staff-select').value || '';
+        const staffName = localStorage.getItem('dd_staff_applicant_name') || document.getElementById('worklog-staff-select').value || '';
 
         await sb.from('push_subscriptions').upsert({
             endpoint: subJson.endpoint,
@@ -851,7 +852,9 @@ async function notifyStaffOfApprovalDecision(evt, staffName, decision) {
 
 function populateWorklogStaffSelect() {
     const select = document.getElementById('worklog-staff-select');
-    const savedName = sessionStorage.getItem('dd_staff_selected_name') || '';
+    // localStorage (not sessionStorage) so this survives the app being fully
+    // closed and reopened, not just reloaded.
+    const savedName = localStorage.getItem('dd_staff_selected_name') || '';
 
     select.innerHTML = '<option value="">-- Select your name --</option>' +
         appState.staff.map(s => `<option value="${s.name}" ${s.name === savedName ? 'selected' : ''}>${s.name} (${s.role})</option>`).join('');
@@ -859,7 +862,7 @@ function populateWorklogStaffSelect() {
 
 function onWorklogStaffChange() {
     const name = document.getElementById('worklog-staff-select').value;
-    sessionStorage.setItem('dd_staff_selected_name', name);
+    localStorage.setItem('dd_staff_selected_name', name);
     renderMyWorkLogs();
     renderAvailableEventsForStaff();
 }
@@ -985,9 +988,11 @@ function renderAvailableEventsForStaff() {
     // Applying no longer depends on picking a name from the registered staff
     // dropdown above - anyone can type their own name here, so casual/new
     // laborers don't need to be added to the Staff list first. We remember
-    // the last name they typed (this browser session only) so their
-    // pending/approved status still shows up if they revisit the page.
-    const myName = sessionStorage.getItem('dd_staff_applicant_name') || '';
+    // the last name they typed in localStorage (not sessionStorage) so it
+    // survives the app being fully closed and reopened, not just reloaded -
+    // otherwise returning staff would see a blank "apply" form again even
+    // after already being approved.
+    const myName = localStorage.getItem('dd_staff_applicant_name') || '';
     const events = getBookedEventsForStaff();
 
     if (events.length === 0) {
@@ -1047,9 +1052,16 @@ function applyForEventWork(eventId) {
         return;
     }
 
+    // Remember who's applying BEFORE the early-return checks below, so
+    // re-opening the app (which can wipe this) or clicking Apply again on an
+    // event already applied to still re-links this device to the right
+    // application and shows its real status instead of a blank form.
+    localStorage.setItem('dd_staff_applicant_name', staffName);
+
     const alreadyApplied = appState.staffApplications.find(a => a.eventId === eventId && a.staffName.toLowerCase() === staffName.toLowerCase());
     if (alreadyApplied) {
         showToast('You have already applied for this event.');
+        renderAvailableEventsForStaff();
         return;
     }
 
@@ -1063,7 +1075,6 @@ function applyForEventWork(eventId) {
         decidedAt: null
     });
 
-    sessionStorage.setItem('dd_staff_applicant_name', staffName);
     saveState();
     showToast('Application submitted! Waiting for admin approval.');
     renderAvailableEventsForStaff();
