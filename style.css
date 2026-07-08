@@ -1490,6 +1490,42 @@ tr.row-highlight-week td:first-child {
     width: 100%;
 }
 
+/* Sub-services nested under a main quotation item - description only, no
+   price/qty of their own since only the parent line is priced. */
+.quotation-sub-item-row td {
+    padding: 4px 10px 4px 34px;
+    border-bottom: none;
+}
+
+.sub-item-bullet {
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.quotation-sub-item-row .sub-item-input {
+    display: inline-block;
+    width: calc(100% - 24px);
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 4px 6px;
+}
+
+.quotation-sub-item-row .sub-item-input:hover,
+.quotation-sub-item-row .sub-item-input:focus {
+    background: #fafafa;
+    border-color: #e1e1e1;
+}
+
+.add-sub-item-row {
+    border-bottom: 1px dashed #eeeeee !important;
+    padding: 2px 10px 10px 34px !important;
+}
+
+.add-sub-item-row .btn.text-btn {
+    font-size: 0.8rem;
+    padding: 2px 0;
+}
+
 /* Quotation customer info line: "NAME: x  DATE: x  VENUE: x" style */
 .quote-customer-block {
     margin-bottom: 24px;

@@ -1584,7 +1584,60 @@ function renderQuotationItems(event) {
             </td>
         `;
         tbody.appendChild(tr);
+
+        // Sub-services under this item (e.g. Decoration -> Stage Decoration,
+        // Backdrop, Sofa...) - description only, no price/qty of their own,
+        // since only the parent service line carries the price.
+        (item.subItems || []).forEach((subDesc, subIndex) => {
+            const subTr = document.createElement('tr');
+            subTr.className = 'quotation-sub-item-row';
+            subTr.innerHTML = `
+                <td colspan="4">
+                    <span class="sub-item-bullet">-</span>
+                    <input type="text" class="table-input sub-item-input" value="${subDesc}" onchange="updateQuotationSubItemField(${index}, ${subIndex}, this.value)">
+                </td>
+                <td class="actions-col no-print text-center">
+                    <button class="action-icon-btn danger" onclick="removeQuotationSubItem(${index}, ${subIndex})"><i class="fa-solid fa-xmark"></i></button>
+                </td>
+            `;
+            tbody.appendChild(subTr);
+        });
+
+        const addSubTr = document.createElement('tr');
+        addSubTr.className = 'no-print';
+        addSubTr.innerHTML = `
+            <td colspan="5" class="add-sub-item-row">
+                <button class="btn text-btn" onclick="addQuotationSubItem(${index})"><i class="fa-solid fa-plus"></i> Add Sub-service</button>
+            </td>
+        `;
+        tbody.appendChild(addSubTr);
     });
+}
+
+function addQuotationSubItem(itemIndex) {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    const item = event.items[itemIndex];
+    if (!item.subItems) item.subItems = [];
+    item.subItems.push('New sub-service');
+
+    renderQuotationItems(event);
+}
+
+function removeQuotationSubItem(itemIndex, subIndex) {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    event.items[itemIndex].subItems.splice(subIndex, 1);
+    renderQuotationItems(event);
+}
+
+function updateQuotationSubItemField(itemIndex, subIndex, val) {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    event.items[itemIndex].subItems[subIndex] = val;
 }
 
 function addPresetServiceToQuotation(serviceName) {
