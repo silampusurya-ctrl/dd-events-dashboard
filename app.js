@@ -124,7 +124,7 @@ function setupRefreshOnResume() {
     const refresh = async () => {
         if (document.visibilityState !== 'visible') return;
 
-        const isStaffAuthenticated = sessionStorage.getItem('dd_staff_authenticated') === 'true';
+        const isStaffAuthenticated = localStorage.getItem('dd_staff_authenticated') === 'true';
         if (isStaffAuthenticated) {
             await loadState();
             renderMyWorkLogs();
@@ -219,7 +219,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let currentAdminEmail = null;
 
 async function initAuth() {
-    const isStaffAuthenticated = sessionStorage.getItem('dd_staff_authenticated') === 'true';
+    // localStorage (not sessionStorage) so staff stay logged in even after
+    // fully closing and reopening the app - only "Exit" logs them out.
+    const isStaffAuthenticated = localStorage.getItem('dd_staff_authenticated') === 'true';
 
     if (isStaffAuthenticated) {
         hideView('auth-container');
@@ -358,7 +360,7 @@ async function handleStaffLogin(e) {
     const enteredHash = await sha256(passwordInput.value);
 
     if (enteredHash === data.staff_password_hash) {
-        sessionStorage.setItem('dd_staff_authenticated', 'true');
+        localStorage.setItem('dd_staff_authenticated', 'true');
         hideView('staff-login-error-msg');
         passwordInput.value = '';
         initAuth();
@@ -420,7 +422,7 @@ async function loadStaffPasswordStatus() {
 }
 
 function staffLogout() {
-    sessionStorage.removeItem('dd_staff_authenticated');
+    localStorage.removeItem('dd_staff_authenticated');
     localStorage.removeItem('dd_staff_selected_name');
     localStorage.removeItem('dd_staff_applicant_name');
     initAuth();
