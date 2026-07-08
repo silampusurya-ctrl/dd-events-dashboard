@@ -1164,6 +1164,44 @@ tr:hover td {
     text-transform: uppercase;
 }
 
+/* Dashboard "Upcoming Events" - highlights anything within the next 7 days
+   with a soft glowing pulse so it draws the eye without being distracting. */
+tr.row-highlight-week {
+    background: rgba(255, 215, 0, 0.12);
+    position: relative;
+}
+
+tr.row-highlight-week:hover {
+    background: rgba(255, 215, 0, 0.2);
+}
+
+tr.row-highlight-week td:first-child {
+    border-left: 3px solid var(--accent-yellow-dark);
+    animation: weekGlow 1.8s ease-in-out infinite;
+}
+
+@keyframes weekGlow {
+    0%, 100% {
+        box-shadow: inset 4px 0 8px -4px rgba(230, 184, 0, 0.15);
+    }
+    50% {
+        box-shadow: inset 4px 0 14px -2px rgba(230, 184, 0, 0.55);
+    }
+}
+
+.badge-this-week {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.68rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    background: var(--accent-yellow-dark);
+    color: var(--white);
+    white-space: nowrap;
+}
+
 .badge-enquiry { background: rgba(52, 152, 219, 0.15); color: var(--color-inquiry); }
 .badge-quotation { background: rgba(155, 89, 182, 0.15); color: var(--color-quotation); }
 .badge-advance-paid { background: rgba(243, 156, 18, 0.15); color: var(--color-advance); }

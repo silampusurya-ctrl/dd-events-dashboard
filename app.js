@@ -2756,9 +2756,23 @@ function renderDashboard() {
     upcomingList.forEach(evt => {
         const calcs = getEventInvoiceCalculations(evt);
         const tr = document.createElement('tr');
-        
+
+        // Highlight anything happening within the next 7 days so it stands
+        // out from the rest of the upcoming list at a glance.
+        const evtDate = new Date(evt.eventDate);
+        evtDate.setHours(0, 0, 0, 0);
+        const daysAway = Math.round((evtDate - todayDate) / (1000 * 60 * 60 * 24));
+        const isWithinWeek = daysAway >= 0 && daysAway <= 7;
+
+        if (isWithinWeek) {
+            tr.className = 'row-highlight-week';
+        }
+
         tr.innerHTML = `
-            <td><strong>${formatDisplayDate(evt.eventDate)}</strong></td>
+            <td>
+                <strong>${formatDisplayDate(evt.eventDate)}</strong>
+                ${isWithinWeek ? `<span class="badge-this-week">${daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : `In ${daysAway} days`}</span>` : ''}
+            </td>
             <td>${evt.clientName}</td>
             <td>${evt.serviceType}</td>
             <td>₹${calcs.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
