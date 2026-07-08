@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=15">
+    <link rel="stylesheet" href="style.css?v=16">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -543,20 +543,20 @@
 
                                 <hr class="divider">
 
-                                <div class="invoice-billing-details">
-                                    <div class="billing-to">
-                                        <strong>Quotation For:</strong>
-                                        <p id="q-cust-name">Customer Name</p>
-                                        <p id="q-cust-phone">Phone: -</p>
-                                        <p id="q-cust-email">Email: -</p>
-                                    </div>
-                                    <div class="billing-event">
-                                        <strong>Event Details:</strong>
-                                        <p>Service: <span id="q-event-service">-</span></p>
-                                        <p>Event Date: <span id="q-event-date">-</span></p>
-                                        <p>Venue: <span id="q-event-venue">-</span></p>
-                                    </div>
+                                <div class="quote-customer-block">
+                                    <p class="quote-customer-line">
+                                        <span><strong>NAME:</strong> <span id="q-cust-name">-</span></span>
+                                        <span><strong>DATE:</strong> <span id="q-event-date">-</span></span>
+                                        <span><strong>VENUE:</strong> <span id="q-event-venue">-</span></span>
+                                    </p>
+                                    <p class="quote-customer-line secondary">
+                                        <span><strong>PH:</strong> <span id="q-cust-phone">-</span></span>
+                                        <span id="q-cust-address-wrap"><strong>ADDRESS:</strong> <span id="q-cust-address">-</span></span>
+                                    </p>
                                 </div>
+                                <p class="hidden-print-fields no-print" style="font-size: 0.8rem; color: var(--text-muted);">
+                                    Service: <span id="q-event-service">-</span> &middot; Email: <span id="q-cust-email">-</span>
+                                </p>
 
                                 <!-- Service Picker Dropdown (Quick Insert) -->
                                 <div class="service-quick-picker no-print">
@@ -586,6 +586,34 @@
                                     <button class="btn text-btn" onclick="addQuotationItem()"><i class="fa-solid fa-plus"></i> Add Item Line</button>
                                 </div>
 
+                                <div class="quote-total-bar">
+                                    <span>TOTAL</span>
+                                    <span id="q-grand-total">₹0.00</span>
+                                </div>
+
+                                <!-- Bonus / Complimentary Items -->
+                                <div class="bonus-free-section">
+                                    <h3 class="bonus-free-heading">BONUS FREE</h3>
+                                    <table class="invoice-items-table bonus-items-table">
+                                        <tbody id="quotation-bonus-tbody">
+                                            <!-- Bonus item rows -->
+                                        </tbody>
+                                    </table>
+                                    <div class="invoice-items-action no-print">
+                                        <button class="btn text-btn" onclick="addQuotationBonusItem()"><i class="fa-solid fa-plus"></i> Add Bonus Item</button>
+                                    </div>
+                                    <div class="quote-total-bar bonus-total-bar" id="q-bonus-total-row">
+                                        <span>TOTAL</span>
+                                        <span id="q-bonus-total">₹0.00</span>
+                                    </div>
+                                </div>
+
+                                <div class="quote-note-section">
+                                    <strong class="quote-note-heading">Note</strong>
+                                    <p class="quote-note-blanks">Event Date....................... Delivery Date.......................</p>
+                                    <p class="quote-note-text">"We guarantee delivery of the complete photo and video output within 15 days from the event date, provided that the full payment is settled by the client within 2 days from the event date. If the agreed amount is not fully paid within the above period, the delivery guarantee will not be applicable and the delivery timeline may be extended until full payment completion."</p>
+                                </div>
+
                                 <div class="invoice-summary-section">
                                     <div class="summary-notes">
                                         <strong>Account & Payment Info:</strong>
@@ -605,11 +633,14 @@
                                             <input type="number" class="calc-input no-print" id="q-discount-input" value="0" oninput="calculateQuotationTotals()">
                                             <span id="q-discount-display" class="print-only">₹0.00</span>
                                         </div>
-                                        <div class="calc-row total-row">
-                                            <span>Total Quote Amount:</span>
-                                            <span id="q-grand-total">₹0.00</span>
-                                        </div>
                                     </div>
+                                </div>
+
+                                <div class="quote-signature-footer">
+                                    <div class="quote-signature-gpay">
+                                        <i class="fa-brands fa-google-pay"></i> GPay: 6374503310
+                                    </div>
+                                    <div class="quote-signature-thanks">Thanking You</div>
                                 </div>
                             </div>
                         </div>
@@ -1137,9 +1168,34 @@
                             <input type="tel" id="client-phone" required placeholder="e.g. 919876543210" autocomplete="tel">
                         </div>
                     </div>
+                    <div class="form-row-two">
+                        <div class="form-group">
+                            <label for="client-email">Customer Email</label>
+                            <input type="email" id="client-email" autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-source">Lead Source</label>
+                            <select id="lead-source" onchange="toggleReferredByField()">
+                                <option value="">-- How did they find us? --</option>
+                                <option value="Referral">Referral</option>
+                                <option value="Instagram">Instagram</option>
+                                <option value="Facebook">Facebook</option>
+                                <option value="WhatsApp">WhatsApp</option>
+                                <option value="Google Search">Google Search</option>
+                                <option value="Walk-in">Walk-in</option>
+                                <option value="Phone Call">Phone Call</option>
+                                <option value="Repeat Customer">Repeat Customer</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group hidden" id="referred-by-group">
+                        <label for="referred-by">Referred By (Name)</label>
+                        <input type="text" id="referred-by" placeholder="e.g. Priya, existing customer">
+                    </div>
                     <div class="form-group">
-                        <label for="client-email">Customer Email</label>
-                        <input type="email" id="client-email" autocomplete="email">
+                        <label for="client-address">Customer Address</label>
+                        <textarea id="client-address" rows="2" placeholder="Door No, Street, Town/City"></textarea>
                     </div>
                     <div class="form-group">
                         <label for="event-venue">Venue / Location</label>
@@ -1194,6 +1250,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=20"></script>
+    <script src="app.js?v=22"></script>
 </body>
 </html>

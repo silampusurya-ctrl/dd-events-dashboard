@@ -1284,6 +1284,9 @@ function submitEventForm() {
     const clientName = document.getElementById('client-name').value.trim();
     const clientPhone = document.getElementById('client-phone').value.trim();
     const clientEmail = document.getElementById('client-email').value.trim();
+    const leadSource = document.getElementById('lead-source').value;
+    const referredBy = leadSource === 'Referral' ? document.getElementById('referred-by').value.trim() : '';
+    const address = document.getElementById('client-address').value.trim();
     const venue = document.getElementById('event-venue').value.trim();
     const eventDate = document.getElementById('event-date').value;
     const serviceType = document.getElementById('service-type').value;
@@ -1297,13 +1300,16 @@ function submitEventForm() {
             appState.events[index].clientName = clientName;
             appState.events[index].clientPhone = clientPhone;
             appState.events[index].clientEmail = clientEmail;
+            appState.events[index].leadSource = leadSource;
+            appState.events[index].referredBy = referredBy;
+            appState.events[index].address = address;
             appState.events[index].venue = venue;
             appState.events[index].eventDate = eventDate;
             appState.events[index].serviceType = serviceType;
             appState.events[index].budget = budget;
             appState.events[index].heldCompleted = heldCompleted;
             appState.events[index].notes = notes;
-            
+
             showToast('Event updated successfully.');
         }
     } else {
@@ -1312,6 +1318,9 @@ function submitEventForm() {
             clientName,
             clientPhone,
             clientEmail,
+            leadSource,
+            referredBy,
+            address,
             venue,
             eventDate,
             serviceType,
@@ -1362,6 +1371,10 @@ function openEditEventModal(eventId) {
     document.getElementById('client-name').value = event.clientName;
     document.getElementById('client-phone').value = event.clientPhone;
     document.getElementById('client-email').value = event.clientEmail || '';
+    document.getElementById('lead-source').value = event.leadSource || '';
+    document.getElementById('referred-by').value = event.referredBy || '';
+    toggleReferredByField();
+    document.getElementById('client-address').value = event.address || '';
     document.getElementById('event-venue').value = event.venue || '';
     document.getElementById('event-date').value = event.eventDate;
     document.getElementById('service-type').value = event.serviceType;
@@ -1525,13 +1538,22 @@ function openQuotationEditor(eventId) {
     
     document.getElementById('q-date-text').textContent = event.createdDate || getTodayDateString();
     document.getElementById('q-cust-name').textContent = event.clientName;
-    document.getElementById('q-cust-phone').textContent = `Phone: ${event.clientPhone}`;
-    document.getElementById('q-cust-email').textContent = `Email: ${event.clientEmail || '-'}`;
+    document.getElementById('q-cust-phone').textContent = event.clientPhone;
+    document.getElementById('q-cust-email').textContent = event.clientEmail || '-';
     document.getElementById('q-event-service').textContent = event.serviceType;
     document.getElementById('q-event-date').textContent = formatDisplayDate(event.eventDate);
     document.getElementById('q-event-venue').textContent = event.venue || '-';
 
+    const addressWrap = document.getElementById('q-cust-address-wrap');
+    if (event.address) {
+        document.getElementById('q-cust-address').textContent = event.address;
+        addressWrap.classList.remove('hidden');
+    } else {
+        addressWrap.classList.add('hidden');
+    }
+
     renderQuotationItems(event);
+    renderQuotationBonusItems(event);
     document.getElementById('q-discount-input').value = event.discount || 0;
     calculateQuotationTotals();
 }
@@ -1621,6 +1643,68 @@ function updateQuotationItemField(idx, field, val) {
     calculateQuotationTotals();
 }
 
+// Bonus / complimentary items - a separate list shown under its own "BONUS
+// FREE" heading with its own total, matching the quotation format where
+// free extras (arches, name boards, etc.) are called out separately from
+// the paid service items above.
+function renderQuotationBonusItems(event) {
+    const tbody = document.getElementById('quotation-bonus-tbody');
+    const totalRow = document.getElementById('q-bonus-total-row');
+    tbody.innerHTML = '';
+
+    if (!event.bonusItems) event.bonusItems = [];
+
+    if (event.bonusItems.length === 0) {
+        totalRow.classList.add('hidden');
+        return;
+    }
+    totalRow.classList.remove('hidden');
+
+    event.bonusItems.forEach((item, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <input type="text" class="table-input" value="${item.desc}" onchange="updateQuotationBonusItemField(${index}, 'desc', this.value)">
+            </td>
+            <td class="text-right" width="140">
+                <input type="number" class="table-input text-right" value="${item.rate}" onchange="updateQuotationBonusItemField(${index}, 'rate', parseFloat(this.value) || 0)">
+            </td>
+            <td class="actions-col no-print text-center" width="50">
+                <button class="action-icon-btn danger" onclick="removeQuotationBonusItem(${index})"><i class="fa-solid fa-xmark"></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function addQuotationBonusItem() {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    if (!event.bonusItems) event.bonusItems = [];
+    event.bonusItems.push({ desc: 'New Bonus Item', rate: 0, qty: 1 });
+
+    renderQuotationBonusItems(event);
+    calculateQuotationTotals();
+}
+
+function removeQuotationBonusItem(idx) {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    event.bonusItems.splice(idx, 1);
+    renderQuotationBonusItems(event);
+    calculateQuotationTotals();
+}
+
+function updateQuotationBonusItemField(idx, field, val) {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+
+    event.bonusItems[idx][field] = val;
+    calculateQuotationTotals();
+}
+
 function calculateQuotationTotals() {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
@@ -1632,6 +1716,13 @@ function calculateQuotationTotals() {
         });
     }
 
+    let bonusTotal = 0;
+    if (event.bonusItems) {
+        event.bonusItems.forEach(item => {
+            bonusTotal += (item.rate * (item.qty || 1));
+        });
+    }
+
     const discountVal = parseFloat(document.getElementById('q-discount-input').value) || 0;
     event.discount = discountVal;
 
@@ -1640,6 +1731,7 @@ function calculateQuotationTotals() {
     document.getElementById('q-subtotal').textContent = `₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     document.getElementById('q-discount-display').textContent = `₹${discountVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     document.getElementById('q-grand-total').textContent = `₹${grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    document.getElementById('q-bonus-total').textContent = `₹${bonusTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function saveQuotationChanges() {
@@ -2881,6 +2973,17 @@ function closeModal(id) {
         document.getElementById('event-id-field').value = '';
         document.getElementById('event-held-completed').checked = false;
         document.getElementById('modal-title').textContent = 'New Event Inquiry';
+        toggleReferredByField();
+    }
+}
+
+// Shows the "Referred By" name field only when Lead Source is set to
+// Referral, so we know exactly who to thank/reward for the referral.
+function toggleReferredByField() {
+    const isReferral = document.getElementById('lead-source').value === 'Referral';
+    document.getElementById('referred-by-group').classList.toggle('hidden', !isReferral);
+    if (!isReferral) {
+        document.getElementById('referred-by').value = '';
     }
 }
 
