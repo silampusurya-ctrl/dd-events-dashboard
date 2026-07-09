@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=17">
+    <link rel="stylesheet" href="style.css?v=19">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -234,6 +234,9 @@
                 </a>
                 <a href="#event-approvals" class="menu-item" onclick="switchTab('event-approvals')">
                     <i class="fa-solid fa-user-check"></i> Event Staff Approvals
+                </a>
+                <a href="#lead-bowls" class="menu-item" onclick="switchTab('lead-bowls')">
+                    <i class="fa-solid fa-bowl-food"></i> Lead Bowls
                 </a>
                 <a href="#customers" class="menu-item" onclick="switchTab('customers')">
                     <i class="fa-solid fa-address-book"></i> Customers
@@ -966,6 +969,16 @@
                 </div>
             </section>
 
+            <!-- Lead Bowls - one "bowl" per muhurtham (auspicious wedding) date. Booked
+                 events (advance paid+) auto-collect into the bowl matching their event
+                 date - nothing to do manually beyond booking the event. -->
+            <section id="tab-lead-bowls" class="tab-content">
+                <p class="stage-desc">Each bowl represents a muhurtham date. Any event booked (advance paid) for that date lands here automatically. A bowl is marked "Filled" once it has at least 3 leads. Manage the date list in Settings.</p>
+                <div id="lead-bowls-grid" class="lead-bowls-grid">
+                    <!-- Dynamic bowl cards -->
+                </div>
+            </section>
+
             <!-- Customers Section -->
             <section id="tab-customers" class="tab-content">
                 <div class="search-bar" style="margin-bottom: 20px;">
@@ -1121,6 +1134,36 @@
                         </div>
                     </div>
 
+                    <!-- Muhurtham Dates (Lead Bowls) -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-solid fa-bowl-food text-lavender"></i> Muhurtham Dates (Lead Bowls)</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>These dates power the "Lead Bowls" page - one bowl per date, auto-filled with any event booked for that date. The starter list below is just an approximate sample; edit it to match your actual panchangam/astrologer calendar.</p>
+
+                            <div id="muhurtham-dates-list" class="admin-accounts-list">
+                                <!-- Dynamic date rows -->
+                            </div>
+
+                            <hr class="panel-divider">
+
+                            <form id="add-muhurtham-form" class="form-compact" onsubmit="event.preventDefault(); addMuhurthamDate();">
+                                <div class="form-row-two">
+                                    <div class="form-group">
+                                        <label for="new-muhurtham-date">Date</label>
+                                        <input type="date" id="new-muhurtham-date" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="new-muhurtham-label">Label (optional)</label>
+                                        <input type="text" id="new-muhurtham-label" placeholder="e.g. Thai Month">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-plus"></i> Add Date</button>
+                            </form>
+                        </div>
+                    </div>
+
                     <!-- Staff Portal Access -->
                     <div class="dashboard-card">
                         <div class="card-header">
@@ -1250,6 +1293,6 @@
     </div>
 
     <!-- Script Import -->
-    <script src="app.js?v=23"></script>
+    <script src="app.js?v=25"></script>
 </body>
 </html>

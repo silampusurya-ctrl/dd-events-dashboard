@@ -597,6 +597,24 @@ async function loadState() {
     if (!appState.staffApplications) appState.staffApplications = [];
     if (!appState.adminEmails) appState.adminEmails = [];
     if (!appState.disabledAdminEmails) appState.disabledAdminEmails = [];
+    if (!appState.muhurthamDates) appState.muhurthamDates = getDefaultMuhurthamDates();
+}
+
+// Sample/approximate dates spanning traditional Tamil wedding-season months
+// (Thai, Panguni/Chithirai, Aani, Karthigai) - these are NOT sourced from a
+// real panchangam/astrologer, just illustrative placeholders. Admins should
+// verify and edit this list in Settings against their actual calendar.
+function getDefaultMuhurthamDates() {
+    return [
+        { id: 'mhd_1', date: '2026-01-15', label: 'Thai Month (sample)' },
+        { id: 'mhd_2', date: '2026-01-22', label: 'Thai Month (sample)' },
+        { id: 'mhd_3', date: '2026-02-05', label: 'Thai Month (sample)' },
+        { id: 'mhd_4', date: '2026-04-14', label: 'Panguni Uthiram period (sample)' },
+        { id: 'mhd_5', date: '2026-04-22', label: 'Chithirai Month (sample)' },
+        { id: 'mhd_6', date: '2026-06-18', label: 'Aani Month (sample)' },
+        { id: 'mhd_7', date: '2026-06-25', label: 'Aani Month (sample)' },
+        { id: 'mhd_8', date: '2026-11-19', label: 'Karthigai Month (sample)' }
+    ];
 }
 
 function initDefaultState() {
@@ -608,6 +626,7 @@ function initDefaultState() {
         staffApplications: [],
         adminEmails: [],
         disabledAdminEmails: [],
+        muhurthamDates: getDefaultMuhurthamDates(),
         webhooks: {
             url: '',
             triggers: { inquiry: true, payment: true, attendance: true }
@@ -1160,6 +1179,121 @@ function filterEventApprovals() {
     });
 }
 
+// ==========================================
+// LEAD BOWLS - one bowl per muhurtham date. Booked events (advance-paid+)
+// auto-collect into whichever bowl matches their event date - there is no
+// manual "move to bowl" step, it's purely a live filter by date.
+// ==========================================
+
+const LEAD_BOWL_MIN_FILL = 3;
+
+function getLeadsForBowlDate(dateStr) {
+    return appState.events.filter(evt =>
+        evt.eventDate === dateStr && getStageIndex(evt.status) >= getStageIndex('advance-paid')
+    );
+}
+
+function renderLeadBowls() {
+    const grid = document.getElementById('lead-bowls-grid');
+    if (!grid) return;
+
+    const bowls = [...(appState.muhurthamDates || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (bowls.length === 0) {
+        grid.innerHTML = '<div class="empty-notifications">No muhurtham dates set up yet. Add some in Settings.</div>';
+        return;
+    }
+
+    const tokenColors = ['#7B2CBF', '#F39C12', '#16A085', '#E74C3C', '#2E86DE', '#D63384', '#27AE60', '#8E44AD'];
+
+    grid.innerHTML = bowls.map(bowl => {
+        const leads = getLeadsForBowlDate(bowl.date);
+        const isFilled = leads.length >= LEAD_BOWL_MIN_FILL;
+
+        // Each lead becomes a little glowing "token" that visually drops into
+        // the glass bowl - like marbles piling up as more dates get booked.
+        const tokensHTML = leads.map((evt, i) => `
+            <div class="lead-token" style="background: ${tokenColors[i % tokenColors.length]};" title="${evt.clientName} - ${evt.serviceType}">
+                ${evt.clientName.trim().charAt(0).toUpperCase() || '?'}
+            </div>
+        `).join('');
+
+        return `
+            <div class="lead-bowl-wrapper">
+                <div class="lead-bowl-shape ${isFilled ? 'lead-bowl-filled' : ''}">
+                    <div class="lead-bowl-shine"></div>
+                    <div class="lead-bowl-tokens">
+                        ${tokensHTML || '<span class="lead-bowl-empty-hint">Empty</span>'}
+                    </div>
+                </div>
+                <h4 class="lead-bowl-date">${formatDisplayDate(bowl.date)}</h4>
+                <p class="text-muted lead-bowl-label">${bowl.label || ''}</p>
+                <div class="lead-bowl-status ${isFilled ? 'filled' : 'pending'}">
+                    ${isFilled
+                        ? `<i class="fa-solid fa-circle-check"></i> Filled (${leads.length} leads)`
+                        : `<i class="fa-solid fa-hourglass-half"></i> ${leads.length}/${LEAD_BOWL_MIN_FILL} leads - needs ${LEAD_BOWL_MIN_FILL - leads.length} more`}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Settings -> Muhurtham Dates management
+function renderMuhurthamDatesList() {
+    const container = document.getElementById('muhurtham-dates-list');
+    if (!container) return;
+
+    const bowls = [...(appState.muhurthamDates || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (bowls.length === 0) {
+        container.innerHTML = '<div class="empty-notifications">No dates added yet.</div>';
+        return;
+    }
+
+    container.innerHTML = bowls.map(bowl => `
+        <div class="admin-account-row">
+            <span class="admin-account-email">
+                <i class="fa-solid fa-calendar-day"></i> ${formatDisplayDate(bowl.date)}
+                ${bowl.label ? `<span class="text-muted" style="font-weight: normal; margin-left: 6px;">${bowl.label}</span>` : ''}
+            </span>
+            <button class="action-icon-btn danger" title="Remove date" onclick="removeMuhurthamDate('${bowl.id}')"><i class="fa-solid fa-trash"></i></button>
+        </div>
+    `).join('');
+}
+
+async function addMuhurthamDate() {
+    const date = document.getElementById('new-muhurtham-date').value;
+    const label = document.getElementById('new-muhurtham-label').value.trim();
+
+    if (!date) {
+        showToast('Please pick a date.');
+        return;
+    }
+
+    if (!appState.muhurthamDates) appState.muhurthamDates = [];
+    if (appState.muhurthamDates.some(b => b.date === date)) {
+        showToast('This date is already in the list.');
+        return;
+    }
+
+    appState.muhurthamDates.push({ id: 'mhd_' + Date.now(), date, label });
+    await saveState();
+    showToast('Muhurtham date added!');
+    document.getElementById('add-muhurtham-form').reset();
+    renderMuhurthamDatesList();
+    renderLeadBowls();
+}
+
+async function removeMuhurthamDate(id) {
+    if (!confirm('Remove this muhurtham date and its lead bowl?')) return;
+
+    appState.muhurthamDates = (appState.muhurthamDates || []).filter(b => b.id !== id);
+    await saveState();
+    showToast('Muhurtham date removed.');
+    renderMuhurthamDatesList();
+    renderLeadBowls();
+}
+
 function populatePresetServicePickers() {
     const qPicker = document.getElementById('q-service-picker');
     const invPicker = document.getElementById('inv-service-picker');
@@ -1243,6 +1377,8 @@ function switchTab(tabId) {
         formattedTitle = 'Staff Work Logs';
     } else if (tabId === 'event-approvals') {
         formattedTitle = 'Event Staff Approvals';
+    } else if (tabId === 'lead-bowls') {
+        formattedTitle = 'Lead Bowls';
     } else if (stageTitles[tabId]) {
         formattedTitle = stageTitles[tabId];
     }
@@ -1264,12 +1400,15 @@ function switchTab(tabId) {
         renderAdminWorkLogs();
     } else if (tabId === 'event-approvals') {
         renderEventApprovals();
+    } else if (tabId === 'lead-bowls') {
+        renderLeadBowls();
     } else if (tabId === 'customers') {
         renderCustomersList();
     } else if (tabId === 'settings') {
         loadStaffPasswordStatus();
         renderAdminAccountsList();
         refreshAdminNotifyUI();
+        renderMuhurthamDatesList();
     }
     
     hideView('notification-dropdown');
