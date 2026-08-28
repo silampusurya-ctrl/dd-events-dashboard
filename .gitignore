@@ -1,3 +1,6 @@
 .vercel
 .env*
 supabase/.temp
+
+# Recovered dashboard exports contain staff phone numbers - never publish them
+tools/*.json

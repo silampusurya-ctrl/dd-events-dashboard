@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { title, body, url } = await req.json();
+    const { title, body, url, audienceRole, departments, staffProfileId, subscriberName } = await req.json();
 
     const vapidPublicKey = Deno.env.get("VAPID_PUBLIC_KEY")!;
     const vapidPrivateKey = Deno.env.get("VAPID_PRIVATE_KEY")!;
@@ -30,6 +30,20 @@ Deno.serve(async (req) => {
     const { data: subs, error } = await supabase.from("push_subscriptions").select("*");
     if (error) throw error;
 
+    const targetedSubs = (subs || []).filter((sub) => {
+      if (audienceRole && sub.subscriber_role !== audienceRole) return false;
+      if (audienceRole === "staff" && Array.isArray(departments) && departments.length > 0) {
+        return departments.includes(sub.subscriber_department);
+      }
+      if (audienceRole === "staff" && staffProfileId) {
+        return sub.staff_profile_id === staffProfileId;
+      }
+      if (audienceRole === "staff" && subscriberName) {
+        return String(sub.subscriber_name || "").toLowerCase() === String(subscriberName).toLowerCase();
+      }
+      return true;
+    });
+
     const payload = JSON.stringify({
       title: title || "DD Events",
       body: body || "You have a new update.",
@@ -39,7 +53,7 @@ Deno.serve(async (req) => {
     let sent = 0;
     let removed = 0;
 
-    await Promise.all((subs || []).map(async (sub) => {
+    await Promise.all(targetedSubs.map(async (sub) => {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: sub.keys },
@@ -57,7 +71,7 @@ Deno.serve(async (req) => {
       }
     }));
 
-    return new Response(JSON.stringify({ sent, removed, total: (subs || []).length }), {
+    return new Response(JSON.stringify({ sent, removed, total: targetedSubs.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {

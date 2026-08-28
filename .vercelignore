@@ -1,0 +1,12 @@
+.git
+.claude
+.env*
+node_modules
+mcp-server
+supabase
+tests
+test-results
+
+# Recovery tooling is for local use, not the live app
+tools
+recover-events.html

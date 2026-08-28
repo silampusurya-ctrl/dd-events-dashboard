@@ -3,12 +3,14 @@
 // back to cache only when offline. This also satisfies the "has a fetch
 // handler" requirement browsers use to decide an app is installable.
 
-const CACHE_NAME = 'dd-events-cache-v17';
+const CACHE_NAME = 'dd-events-cache-v59';
 const APP_SHELL = [
     './',
     './index.html',
     './style.css',
     './app.js',
+    './document-pricing.js',
+    './sales-billing.js',
     './manifest.json',
     './icons/icon-192.png',
     './icons/icon-512.png'

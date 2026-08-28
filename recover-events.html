@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DD Events - Data Recovery</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+           background: #0f1115; color: #e6e8ec; line-height: 1.5; }
+    .wrap { max-width: 1000px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: #9aa3b2; font-size: 14px; margin-bottom: 24px; }
+    .card { background: #171a21; border: 1px solid #262b36; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    label { display: block; font-size: 13px; color: #9aa3b2; margin-bottom: 6px; }
+    input { width: 100%; padding: 10px 12px; margin-bottom: 14px; border-radius: 8px;
+            border: 1px solid #2d3340; background: #0f1115; color: #e6e8ec; font-size: 15px; }
+    button { padding: 10px 18px; border-radius: 8px; border: 0; background: #3b82f6; color: #fff;
+             font-size: 15px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.secondary { background: #2d3340; }
+    .status { font-size: 14px; margin-top: 12px; white-space: pre-wrap; }
+    .err { color: #f87171; }
+    .ok { color: #4ade80; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #262b36; vertical-align: top; }
+    th { color: #9aa3b2; font-weight: 600; }
+    .muted { color: #6b7280; }
+    code { background: #0f1115; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    .warn { background: #2a1f10; border-color: #5a3d15; }
+    .scroll { overflow-x: auto; }
+    .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <h1>DD Events - Data Recovery</h1>
+    <p class="sub">Read-only tool. It never writes to the database - it only reads what survived and builds a
+    backup JSON you can review, then import through the dashboard's Settings &rarr; Import Backup.</p>
+
+    <div class="card" id="login-card">
+        <label for="email">Admin email</label>
+        <input type="email" id="email" autocomplete="username">
+        <label for="password">Password</label>
+        <input type="password" id="password" autocomplete="current-password">
+        <button id="login-btn" onclick="doLogin()">Log in and scan</button>
+        <div class="status" id="login-status"></div>
+    </div>
+
+    <div class="card hidden" id="result-card">
+        <div id="summary"></div>
+        <div class="scroll"><table id="events-table"></table></div>
+        <p style="margin-top:20px">
+            <button onclick="downloadRecovered()">Download recovery JSON</button>
+            <button class="secondary" onclick="downloadRaw()">Download raw scan (evidence)</button>
+        </p>
+        <div class="status" id="build-status"></div>
+    </div>
+
+    <div class="card warn hidden" id="docs-card">
+        <h3 style="margin-top:0">Uploaded documents found</h3>
+        <p class="sub" style="margin-bottom:8px">Quotation / bill files still in storage. Open them to read the
+        customer name, phone and amounts, then fill those into the recovered events.</p>
+        <div class="scroll"><table id="docs-table"></table></div>
+    </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://razwvjgajaparzjksoll.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJhend2amdhamFwYXJ6amtzb2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMDM0NDMsImV4cCI6MjA5ODg3OTQ0M30.cWqUkKcf6WHs0srbvIqx58kMqSiBXU9NdZy8SBus1OQ';
+const BUCKET = 'event-documents';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let scan = null;
+let recoveredState = null;
+
+function setStatus(id, text, cls) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+async function doLogin() {
+    const email = document.getElementById('email').value.trim().toLowerCase();
+    const password = document.getElementById('password').value;
+    if (!email || !password) { setStatus('login-status', 'Enter your email and password.', 'err'); return; }
+
+    document.getElementById('login-btn').disabled = true;
+    setStatus('login-status', 'Logging in...');
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+        document.getElementById('login-btn').disabled = false;
+        setStatus('login-status', 'Login failed: ' + error.message, 'err');
+        return;
+    }
+    try {
+        await runScan();
+    } catch (err) {
+        console.error(err);
+        setStatus('login-status', 'Scan failed: ' + err.message, 'err');
+        document.getElementById('login-btn').disabled = false;
+    }
+}
+
+async function runScan() {
+    setStatus('login-status', 'Reading dashboard row...');
+    const { data: row, error: rowError } = await sb
+        .from('dashboard_data').select('data, updated_at').eq('id', 1).single();
+    if (rowError) throw new Error('dashboard_data: ' + rowError.message);
+
+    setStatus('login-status', 'Reading finance entries...');
+    const { data: finance, error: financeError } = await sb
+        .from('event_finance_entries')
+        .select('id,event_id,entry_type,service_key,service_name,category,amount,notes,created_by,created_at')
+        .order('created_at', { ascending: true });
+    if (financeError) {
+        throw new Error('event_finance_entries: ' + financeError.message +
+            '\n\nIf this says "permission denied", your email is missing from the admin roster. ' +
+            'Open the dashboard and log in once with the updated app.js, then run this tool again.');
+    }
+
+    setStatus('login-status', 'Reading sales bills...');
+    let bills = [];
+    const billsResult = await sb.from('sales_bills').select('*').order('created_at', { ascending: true });
+    if (!billsResult.error) bills = billsResult.data || [];
+
+    setStatus('login-status', 'Listing uploaded documents...');
+    const documents = await listAllDocuments();
+
+    scan = { row, finance: finance || [], bills, documents };
+    buildRecovered();
+}
+
+async function listAllDocuments() {
+    const out = [];
+    const rootList = await sb.storage.from(BUCKET).list('', { limit: 1000 });
+    if (rootList.error) return out;
+    for (const eventFolder of rootList.data || []) {
+        if (eventFolder.id) continue; // a file sitting at the root, not an event folder
+        const serviceList = await sb.storage.from(BUCKET).list(eventFolder.name, { limit: 1000 });
+        if (serviceList.error) continue;
+        for (const serviceFolder of serviceList.data || []) {
+            if (serviceFolder.id) continue;
+            const prefix = eventFolder.name + '/' + serviceFolder.name;
+            const fileList = await sb.storage.from(BUCKET).list(prefix, { limit: 1000 });
+            if (fileList.error) continue;
+            for (const file of fileList.data || []) {
+                if (!file.id) continue;
+                const splitAt = file.name.indexOf('-');
+                out.push({
+                    eventId: eventFolder.name,
+                    serviceKey: serviceFolder.name,
+                    path: prefix + '/' + file.name,
+                    id: splitAt > 0 ? file.name.slice(0, splitAt) : file.name,
+                    name: splitAt > 0 ? file.name.slice(splitAt + 1) : file.name,
+                    type: (file.metadata && file.metadata.mimetype) || '',
+                    size: (file.metadata && file.metadata.size) || 0,
+                    uploadedAt: file.created_at || ''
+                });
+            }
+        }
+    }
+    return out;
+}
+
+function dateOnly(value) {
+    if (!value) return '';
+    return String(value).slice(0, 10);
+}
+
+// The staff directory was wiped too, but every assignment and application
+// carries the person's name, phone and the work they were booked for. The
+// phone number is the reliable identity here - the same person shows up under
+// several spellings, so names are collected per phone and the latest one wins.
+function rebuildStaff(state) {
+    const byPerson = new Map();
+    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+
+    const records = [];
+    for (const row of state.eventStaffAssignments || []) {
+        records.push({ staffId: row.staffId, name: row.staffName, phone: row.phone, role: row.workType, when: row.createdAt });
+    }
+    for (const row of state.staffApplications || []) {
+        records.push({ staffId: row.staffId, name: row.staffName, phone: row.phone, role: row.department, when: row.appliedAt });
+    }
+    records.sort((a, b) => String(a.when || '').localeCompare(String(b.when || '')));
+
+    for (const record of records) {
+        const phone = normalizePhone(record.phone);
+        const key = phone || record.staffId || String(record.name || '').trim().toLowerCase();
+        if (!key) continue;
+        if (!byPerson.has(key)) {
+            byPerson.set(key, { staffId: '', name: '', names: new Set(), phone: '', roles: new Set(), firstSeen: '' });
+        }
+        const person = byPerson.get(key);
+        if (!person.staffId && record.staffId) person.staffId = record.staffId;
+        if (!person.phone && phone) person.phone = phone;
+        if (record.name) {
+            person.names.add(record.name);
+            person.name = record.name;
+        }
+        if (record.role) person.roles.add(record.role);
+        if (record.when && (!person.firstSeen || record.when < person.firstSeen)) person.firstSeen = record.when;
+    }
+
+    const identified = [...byPerson.entries()].filter(([, person]) => person.phone);
+    for (const [key, person] of [...byPerson.entries()]) {
+        if (person.phone) continue;
+        const candidate = String(person.name || '').trim().toLowerCase();
+        const match = identified.find(([, known]) =>
+            [...known.names].some(name => name.trim().toLowerCase() === candidate));
+        if (!match) continue;
+        for (const role of person.roles) match[1].roles.add(role);
+        byPerson.delete(key);
+    }
+
+    return [...byPerson.values()]
+        .filter(person => person.name)
+        .map(person => {
+            const roles = [...person.roles].filter(Boolean);
+            const primaryRole = roles.find(role => role !== 'General Event Work') || roles[0] || 'General Event Work';
+            return {
+                id: person.staffId || 'stf_recovered_' + (person.phone || Math.random().toString(36).slice(2, 8)),
+                name: person.name,
+                role: primaryRole,
+                department: primaryRole,
+                phone: person.phone,
+                address: '',
+                workRoles: roles,
+                workRolesUpdatedAt: '',
+                selfCreated: false,
+                createdAt: person.firstSeen || new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                recoveredAt: new Date().toISOString(),
+                recoveredAlsoKnownAs: [...person.names].filter(name => name !== person.name)
+            };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildRecovered() {
+    const survivingState = scan.row.data || {};
+    const assignments = survivingState.eventStaffAssignments || [];
+    const applications = survivingState.staffApplications || [];
+    const byEvent = new Map();
+
+    function slot(eventId) {
+        if (!eventId) return null;
+        if (!byEvent.has(eventId)) {
+            byEvent.set(eventId, {
+                eventId, services: new Map(), staff: new Map(),
+                spend: 0, investment: 0, documents: [], firstSeen: '', financeNotes: []
+            });
+        }
+        return byEvent.get(eventId);
+    }
+    function noteFirstSeen(entry, when) {
+        if (!when) return;
+        if (!entry.firstSeen || when < entry.firstSeen) entry.firstSeen = when;
+    }
+
+    for (const row of scan.finance) {
+        const entry = slot(String(row.event_id || ''));
+        if (!entry) continue;
+        const name = String(row.service_name || 'General');
+        entry.services.set(name, (entry.services.get(name) || 0) + Number(row.amount || 0));
+        if (row.entry_type === 'investment') entry.investment += Number(row.amount || 0);
+        else entry.spend += Number(row.amount || 0);
+        if (row.notes) entry.financeNotes.push(row.notes);
+        noteFirstSeen(entry, row.created_at);
+    }
+    for (const row of assignments) {
+        const entry = slot(String(row.eventId || ''));
+        if (!entry) continue;
+        entry.staff.set(row.staffName || 'Unknown', row.workType || '');
+        noteFirstSeen(entry, row.createdAt);
+    }
+    for (const row of applications) {
+        const entry = slot(String(row.eventId || ''));
+        if (!entry) continue;
+        if (!entry.staff.has(row.staffName)) entry.staff.set(row.staffName || 'Unknown', row.department || '');
+        noteFirstSeen(entry, row.appliedAt);
+    }
+    for (const doc of scan.documents) {
+        const entry = slot(doc.eventId);
+        if (!entry) continue;
+        entry.documents.push(doc);
+        noteFirstSeen(entry, doc.uploadedAt);
+    }
+
+    const events = [];
+    for (const entry of byEvent.values()) {
+        // Event ids are `evt_<epoch ms>`, so the id itself dates the record
+        // more precisely than the first action attached to it.
+        const idStamp = Number(String(entry.eventId).replace(/^evt_/, ''));
+        const idDate = Number.isFinite(idStamp) && idStamp > 0
+            ? dateOnly(new Date(idStamp).toISOString())
+            : '';
+        const serviceNames = [...entry.services.keys()];
+        const staffLines = [...entry.staff.entries()]
+            .map(([name, work]) => work ? name + ' (' + work + ')' : name);
+        const notes = [
+            'RECOVERED RECORD - customer name, phone, venue, date and budget were lost and must be filled in by hand.',
+            serviceNames.length ? 'Services seen: ' + serviceNames.join(', ') : '',
+            entry.spend ? 'Recorded expenses: Rs ' + entry.spend.toFixed(2) : '',
+            entry.investment ? 'Recorded investment: Rs ' + entry.investment.toFixed(2) : '',
+            staffLines.length ? 'Staff assigned: ' + staffLines.join(', ') : '',
+            entry.documents.length ? 'Uploaded files: ' + entry.documents.map(d => d.name).join(', ') : '',
+            entry.financeNotes.length ? 'Finance notes: ' + entry.financeNotes.join(' | ') : ''
+        ].filter(Boolean).join('\n');
+
+        events.push({
+            id: entry.eventId,
+            clientName: 'RECOVERED ' + entry.eventId,
+            clientPhone: '', clientEmail: '', leadSource: '', referredBy: '',
+            address: '', venue: '', eventDate: '',
+            serviceType: serviceNames[0] || '',
+            budget: 0,
+            notes,
+            status: 'enquiry', stageIndex: 0, delivered: false, heldCompleted: false,
+            items: [], discount: 0, payments: [],
+            createdDate: idDate || dateOnly(entry.firstSeen) || dateOnly(new Date().toISOString()),
+            documents: entry.documents.map(d => ({
+                id: d.id, name: d.name, path: d.path, type: d.type, size: d.size,
+                serviceKey: d.serviceKey, serviceName: d.serviceKey, uploadedAt: d.uploadedAt
+            })),
+            documentNotes: '', documentServiceNotes: {},
+            recoveredAt: new Date().toISOString()
+        });
+    }
+    events.sort((a, b) => String(a.createdDate).localeCompare(String(b.createdDate)));
+
+    recoveredState = Object.assign({}, survivingState, {
+        events,
+        staff: (survivingState.staff || []).length ? survivingState.staff : rebuildStaff(survivingState),
+        attendance: survivingState.attendance || [],
+        workLogs: survivingState.workLogs || []
+    });
+
+    renderResults(events);
+}
+
+function renderResults(events) {
+    document.getElementById('login-card').classList.add('hidden');
+    document.getElementById('result-card').classList.remove('hidden');
+
+    document.getElementById('summary').innerHTML =
+        '<p class="ok">Scan complete.</p><p>' +
+        '<strong>' + events.length + '</strong> event(s) reconstructed from surviving evidence &middot; ' +
+        '<strong>' + scan.finance.length + '</strong> finance entries &middot; ' +
+        '<strong>' + scan.bills.length + '</strong> sales bills &middot; ' +
+        '<strong>' + scan.documents.length + '</strong> uploaded files &middot; ' +
+        '<strong>' + recoveredState.staff.length + '</strong> staff members.<br>' +
+        '<span class="muted">Customer names, phones, venues, dates, quotations and payment history lived only ' +
+        'in the wiped row and cannot be rebuilt from these sources - the files below are the best place to ' +
+        'read them back.</span></p>';
+
+    const rows = events.map(e => {
+        const evidence = (e.notes || '').split('\n').slice(1).join('<br>');
+        return '<tr><td><code>' + e.id + '</code></td><td>' + (e.createdDate || '<span class="muted">?</span>') +
+               '</td><td>' + (e.serviceType || '<span class="muted">?</span>') + '</td><td>' + evidence + '</td></tr>';
+    }).join('');
+    document.getElementById('events-table').innerHTML =
+        '<tr><th>Event ID</th><th>Earliest date seen</th><th>Service</th><th>Evidence</th></tr>' + rows;
+
+    if (scan.documents.length) {
+        document.getElementById('docs-card').classList.remove('hidden');
+        document.getElementById('docs-table').innerHTML =
+            '<tr><th>Event</th><th>File</th><th>Uploaded</th><th></th></tr>' +
+            scan.documents.map((d, i) =>
+                '<tr><td><code>' + d.eventId + '</code></td><td>' + d.name + '</td><td>' +
+                dateOnly(d.uploadedAt) + '</td><td><button class="secondary" onclick="openDoc(' + i +
+                ')">Open</button></td></tr>'
+            ).join('');
+    }
+}
+
+async function openDoc(index) {
+    const doc = scan.documents[index];
+    const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(doc.path, 3600);
+    if (error) { alert('Could not open file: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
+}
+
+function downloadFile(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 4)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+}
+
+function downloadRecovered() {
+    if (!recoveredState) return;
+    downloadFile('dd_events_recovered_' + new Date().toISOString().slice(0, 10) + '.json', recoveredState);
+    setStatus('build-status',
+        'Saved. Review the file first, then import it from the dashboard: Settings > Import Backup.', 'ok');
+}
+
+function downloadRaw() {
+    if (!scan) return;
+    downloadFile('dd_events_raw_scan_' + new Date().toISOString().slice(0, 10) + '.json', scan);
+    setStatus('build-status', 'Raw evidence saved.', 'ok');
+}
+</script>
+</body>
+</html>

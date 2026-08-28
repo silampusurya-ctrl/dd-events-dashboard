@@ -7,6 +7,7 @@ let appState = {
     attendance: [],
     workLogs: [],
     staffApplications: [],
+    eventStaffAssignments: [],
     webhooks: {
         url: '',
         triggers: {
@@ -41,8 +42,77 @@ const servicePresets = [
     { name: "Luxury & Destination Wedding Services", rate: 150000 }
 ];
 
+const staffDepartments = servicePresets.map(preset => preset.name);
+const EVENT_DOCUMENTS_BUCKET = 'event-documents';
+
+const departmentKeywords = {
+    'Planning & Consultation': ['planning', 'consultation', 'wedding planning'],
+    'Venue Booking': ['venue'],
+    'Decoration': ['decoration', 'decor', 'stage'],
+    'Catering': ['catering', 'food', 'meal'],
+    'Photography & Videography': ['photography', 'photographer', 'videography', 'video', 'photo'],
+    'Makeup & Styling': ['makeup', 'styling', 'beauty'],
+    'Entertainment': ['entertainment', 'dj', 'music', 'dance'],
+    'Sound, Light & LED': ['sound', 'light', 'led'],
+    'Guest Management': ['guest management', 'hospitality'],
+    'Transportation': ['transportation', 'transport', 'vehicle'],
+    'Accommodation': ['accommodation', 'hotel', 'room'],
+    'Seer & Return Gifts': ['seer', 'return gift', 'gift'],
+    'Rentals': ['rental', 'rentals'],
+    'Traditional Services': ['traditional', 'pooja', 'ritual'],
+    'Special Effects': ['special effect', 'firework', 'smoke'],
+    'Wedding Essentials': ['wedding essential'],
+    'Digital Services': ['digital', 'social media', 'website'],
+    'Post-Wedding Deliverables': ['post-wedding', 'album', 'deliverable'],
+    'Event Coordination': ['coordination', 'coordinator'],
+    'Luxury & Destination Wedding Services': ['destination wedding', 'luxury wedding']
+};
+
+const commonStaffWorkRoles = [
+    'Electrician', 'Florist', 'Loader', 'Helper', 'Stage Setup', 'Backdrop Setup',
+    'Light Technician', 'Sound Technician', 'LED Operator', 'Photographer',
+    'Videographer', 'Drone Operator', 'Album Designer', 'Makeup Artist',
+    'Catering Service', 'Cook', 'Server', 'Driver', 'Event Coordinator',
+    'Guest Reception', 'Cleaner', 'Material In-Charge'
+];
+
+const staffSubWorksByDepartment = {
+    'Planning & Consultation': ['Event Planner', 'Budget Planning', 'Timeline Coordinator', 'Vendor Coordinator', 'Client Coordinator'],
+    'Venue Booking': ['Venue Coordinator', 'Site Inspector', 'Booking Coordinator', 'Hall Supervisor'],
+    'Decoration': ['Decoration Supervisor', 'Florist', 'Stage Setup', 'Backdrop Setup', 'Electrician', 'Loader', 'Helper'],
+    'Catering': ['Catering Supervisor', 'Head Cook', 'Assistant Cook', 'Server', 'Buffet Setup', 'Cleaner'],
+    'Photography & Videography': ['Photographer', 'Candid Photographer', 'Traditional Photographer', 'Videographer', 'Drone Operator', 'Video Editor', 'Album Designer'],
+    'Makeup & Styling': ['Makeup Artist', 'Hair Stylist', 'Saree Drapist', 'Groom Stylist', 'Makeup Assistant'],
+    'Entertainment': ['DJ', 'Emcee', 'Singer', 'Dancer', 'Band Coordinator', 'Entertainment Coordinator'],
+    'Sound, Light & LED': ['Sound Technician', 'Light Technician', 'LED Operator', 'Electrician', 'Console Operator', 'Rigging Helper'],
+    'Guest Management': ['Guest Reception', 'Hospitality Coordinator', 'Invitation Desk', 'Seating Coordinator', 'Guest Assistant'],
+    'Transportation': ['Transport Coordinator', 'Driver', 'Vehicle In-Charge', 'Pickup Assistant', 'Parking Coordinator'],
+    'Accommodation': ['Accommodation Coordinator', 'Room Allocation', 'Hotel Liaison', 'Check-in Assistant', 'Guest Support'],
+    'Seer & Return Gifts': ['Gift Coordinator', 'Gift Packing', 'Seer Arrangement', 'Distribution Staff', 'Stock In-Charge'],
+    'Rentals': ['Rental Coordinator', 'Material In-Charge', 'Furniture Setup', 'Tent Setup', 'Loader', 'Return Checker'],
+    'Traditional Services': ['Priest Coordinator', 'Ritual Assistant', 'Pooja Material In-Charge', 'Traditional Artist', 'Temple Coordinator'],
+    'Special Effects': ['Special Effects Operator', 'Cold Pyro Operator', 'Smoke Machine Operator', 'Confetti Operator', 'Safety Assistant'],
+    'Wedding Essentials': ['Wedding Essentials Coordinator', 'Garland In-Charge', 'Thamboolam Setup', 'Ceremony Assistant', 'Material Checker'],
+    'Digital Services': ['Social Media Manager', 'Live Streaming Operator', 'Content Creator', 'Website Coordinator', 'Digital Invitation Designer'],
+    'Post-Wedding Deliverables': ['Album Designer', 'Photo Editor', 'Video Editor', 'Delivery Coordinator', 'Quality Checker'],
+    'Event Coordination': ['Event Coordinator', 'Floor Manager', 'Stage Manager', 'Vendor Coordinator', 'Timeline Coordinator', 'Runner'],
+    'Luxury & Destination Wedding Services': ['Destination Planner', 'Travel Coordinator', 'Guest Experience Manager', 'Local Vendor Coordinator', 'Logistics Manager', 'Concierge']
+};
+
+function getDepartmentSubWorks(department) {
+    return staffSubWorksByDepartment[department] || commonStaffWorkRoles;
+}
+
 let currentQuotationEventId = null;
 let currentInvoiceEventId = null;
+let currentEventStageFilter = 'all';
+let currentEventDateView = 'event';
+let currentEventDocumentsEventId = null;
+let currentEventDocumentServiceKey = '';
+let currentEventFinanceEventId = null;
+let adminFinanceEntries = [];
+let pendingStaffProfilePhoto = '';
+let currentStaffDirectoryFilter = { type: 'all', value: '' };
 
 // Manual pipeline stage sequence. An event moves from one stage to the next
 // only when the "Approve -> Next Stage" tick button is clicked - nothing
@@ -51,11 +121,112 @@ const STAGE_DEFS = [
     { key: 'enquiry', label: 'Enquiry' },
     { key: 'quotation', label: 'Quotation' },
     { key: 'advance-paid', label: 'Advance Pay / Date Booked' },
-    { key: 'event-completed', label: 'Event Completed' },
+    { key: 'event-completed', label: 'Event Execution' },
     { key: 'pending-bill', label: 'Pending Bill' },
     { key: 'completed-bill', label: 'Completed Bill' },
     { key: 'delivered', label: 'Delivered' }
 ];
+
+function cloneDocumentData(data) {
+    return JSON.parse(JSON.stringify(data || { items: [], bonusItems: [], discount: 0 }));
+}
+
+function escapeDocumentText(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function handleInlineEditorKey(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.blur();
+    }
+}
+
+function normalizeInlineNumber(element, fallback = 0, integer = false) {
+    const parsed = integer ? parseInt(element.textContent) : parseFloat(element.textContent);
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    element.textContent = String(value);
+    return value;
+}
+
+// Quotation and invoice are separate business documents. Older saved events
+// used the same event.items array for both, so migrate that data lazily without
+// losing any existing services, sub-services or bonus items.
+function getQuotationDocument(event) {
+    if (!event.quotationData) {
+        event.quotationData = {
+            items: cloneDocumentData(event.items || []),
+            bonusItems: cloneDocumentData(event.bonusItems || []),
+            discount: Number(event.discount) || 0,
+            savedAt: event.quotationSavedAt || null
+        };
+    }
+    if (!Array.isArray(event.quotationData.items)) event.quotationData.items = [];
+    if (!Array.isArray(event.quotationData.bonusItems)) event.quotationData.bonusItems = [];
+    return event.quotationData;
+}
+
+function getInvoiceDocument(event) {
+    if (!event.invoiceData) {
+        const source = getQuotationDocument(event);
+        event.invoiceData = cloneDocumentData({
+            items: source.items,
+            bonusItems: source.bonusItems,
+            discount: source.discount,
+            sourceQuotationSavedAt: source.savedAt || null
+        });
+    }
+    if (!Array.isArray(event.invoiceData.items)) event.invoiceData.items = [];
+    if (!Array.isArray(event.invoiceData.bonusItems)) event.invoiceData.bonusItems = [];
+    return event.invoiceData;
+}
+
+function syncLegacyDocumentFields(event, documentData) {
+    // Keep legacy fields updated for backups and the MCP server while the UI
+    // uses the safer quotationData/invoiceData documents.
+    event.items = cloneDocumentData(documentData.items || []);
+    event.bonusItems = cloneDocumentData(documentData.bonusItems || []);
+    event.discount = Number(documentData.discount) || 0;
+}
+
+function markQuotationSaved(event) {
+    const quote = getQuotationDocument(event);
+    quote.savedAt = new Date().toISOString();
+    event.quotationSavedAt = quote.savedAt;
+    syncLegacyDocumentFields(event, quote);
+}
+
+function copyQuotationToInvoice(event) {
+    const quote = getQuotationDocument(event);
+    event.invoiceData = cloneDocumentData({
+        items: quote.items,
+        bonusItems: quote.bonusItems,
+        discount: quote.discount,
+        sourceQuotationSavedAt: quote.savedAt || new Date().toISOString()
+    });
+    syncLegacyDocumentFields(event, event.invoiceData);
+}
+
+function getDocumentCalculations(documentData) {
+    const subtotal = (documentData.items || []).reduce((sum, item) => {
+        return sum + getDocumentItemTotal(item);
+    }, 0);
+    const discount = Number(documentData.discount) || 0;
+    return {
+        subtotal,
+        discount,
+        grandTotal: Math.max(0, subtotal - discount)
+    };
+}
+
+function getQuotationCalculations(event) {
+    return getDocumentCalculations(getQuotationDocument(event));
+}
 
 function getStageIndex(key) {
     const idx = STAGE_DEFS.findIndex(s => s.key === key);
@@ -81,7 +252,7 @@ function syncEventStage(evt) {
 
 // Manually advances an event to the next pipeline stage. This is the only
 // way an event's stage changes - triggered by the "Approve" tick button.
-function advanceEventStage(eventId) {
+async function advanceEventStage(eventId) {
     const evt = appState.events.find(e => e.id === eventId);
     if (!evt) return;
 
@@ -90,9 +261,20 @@ function advanceEventStage(eventId) {
         return;
     }
 
+    const currentStage = evt.stageIndex;
+
+    // Lock the approved quotation into a separate invoice document when the
+    // booking is confirmed, then refresh it once more when Event Execution is
+    // approved into Pending Bill. The second hand-off carries any final quote
+    // corrections made before billing starts.
+    if (currentStage === 1 || currentStage === 3) {
+        markQuotationSaved(evt);
+        copyQuotationToInvoice(evt);
+    }
+
     evt.stageIndex++;
     syncEventStage(evt);
-    saveState();
+    await saveState();
     showToast(`Moved to "${getStageLabel(evt.status)}" stage.`);
     refreshAllViews();
 
@@ -126,16 +308,26 @@ function setupRefreshOnResume() {
 
         const isStaffAuthenticated = localStorage.getItem('dd_staff_authenticated') === 'true';
         if (isStaffAuthenticated) {
-            await loadState();
-            renderMyWorkLogs();
-            renderAvailableEventsForStaff();
+            if (await loadState()) {
+                renderMyWorkLogs();
+                renderAvailableEventsForStaff();
+            } else {
+                showToast('Could not refresh shared data. Your current view was kept.');
+            }
             return;
         }
 
+        // Skip reload if a save is in-flight or completed within the last 4 seconds —
+        // reloading now would overwrite in-memory edits that haven't landed in Supabase yet.
+        if (_saveInFlight || (Date.now() - _lastSaveAt < 4000)) return;
+
         const { data: { session } } = await sb.auth.getSession();
         if (session && session.user) {
-            await loadState();
-            refreshAllViews();
+            if (await loadState()) {
+                refreshAllViews();
+            } else {
+                showToast('Could not refresh shared data. Your current view was kept.');
+            }
         }
     };
 
@@ -172,6 +364,34 @@ function registerServiceWorker() {
 
 let deferredInstallPrompt = null;
 
+function getInstallPlatform() {
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPad|iPhone|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIOS) return 'ios';
+    if (/Firefox|FxiOS/i.test(ua)) return 'firefox';
+    if (/SamsungBrowser/i.test(ua)) return 'samsung';
+    if (/Edg/i.test(ua)) return 'edge';
+    if (/Android/i.test(ua)) return 'android';
+    if (/Safari/i.test(ua) && !/Chrome|Chromium|CriOS/i.test(ua)) return 'safari';
+    return 'desktop';
+}
+
+function updateInstallBannerForBrowser() {
+    const message = document.getElementById('install-banner-message');
+    const button = document.getElementById('install-app-button');
+    if (!message || !button) return;
+    const platform = getInstallPlatform();
+    const needsGuide = !deferredInstallPrompt;
+    button.innerHTML = needsGuide
+        ? '<i class="fa-solid fa-circle-info"></i> How to Install'
+        : '<i class="fa-solid fa-download"></i> Install';
+    if (platform === 'ios') message.textContent = 'Install from Safari using Share → Add to Home Screen.';
+    else if (platform === 'firefox') message.textContent = 'Install from the Firefox menu using Install or Add to Home Screen.';
+    else if (platform === 'safari') message.textContent = 'Add DD Events from Safari to your Dock or Home Screen.';
+    else if (needsGuide) message.textContent = 'Use your browser menu to install or add DD Events to your home screen.';
+    else message.textContent = 'Add this app to your home screen for quick access.';
+}
+
 function setupInstallPrompt() {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     if (isStandalone) return;
@@ -181,6 +401,7 @@ function setupInstallPrompt() {
         deferredInstallPrompt = e;
 
         if (sessionStorage.getItem('dd_install_banner_dismissed') === 'true') return;
+        updateInstallBannerForBrowser();
         showView('install-app-banner');
     });
 
@@ -189,6 +410,14 @@ function setupInstallPrompt() {
         hideView('install-app-banner');
         showToast('DD Events installed! Find it on your home screen.');
     });
+
+    // Safari and Firefox do not expose Chrome's beforeinstallprompt event.
+    // Show the same banner with browser-specific manual installation steps.
+    window.setTimeout(() => {
+        if (deferredInstallPrompt || sessionStorage.getItem('dd_install_banner_dismissed') === 'true') return;
+        updateInstallBannerForBrowser();
+        showView('install-app-banner');
+    }, 1400);
 }
 
 function dismissInstallBanner() {
@@ -198,11 +427,49 @@ function dismissInstallBanner() {
 
 async function triggerAppInstall() {
     hideView('install-app-banner');
-    if (!deferredInstallPrompt) return;
+    if (!deferredInstallPrompt) {
+        showManualInstallHelp();
+        return;
+    }
 
     deferredInstallPrompt.prompt();
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
+}
+
+function showManualInstallHelp() {
+    const content = document.getElementById('install-help-content');
+    if (!content) return;
+    const platform = getInstallPlatform();
+    let title = 'Install from your browser menu';
+    let steps = [
+        'Open the browser menu.',
+        'Choose Install app or Add to Home Screen.',
+        'Confirm Add or Install.'
+    ];
+
+    if (platform === 'ios') {
+        title = 'Install on iPhone / iPad using Safari';
+        steps = ['Open this link in Safari.', 'Tap the Share button.', 'Choose Add to Home Screen.', 'Turn on Open as Web App, then tap Add.'];
+    } else if (platform === 'firefox') {
+        title = 'Install using Firefox';
+        steps = ['Tap the three-dot Firefox menu.', 'Choose Install or Add to Home Screen.', 'Tap Add automatically or confirm Add.'];
+    } else if (platform === 'samsung') {
+        title = 'Install using Samsung Internet';
+        steps = ['Tap the browser menu.', 'Choose Add page to.', 'Select Home screen and confirm.'];
+    } else if (platform === 'safari') {
+        title = 'Install using Safari';
+        steps = ['Open the File menu.', 'Choose Add to Dock.', 'Confirm the app name and add it.'];
+    } else if (platform === 'edge') {
+        title = 'Install using Microsoft Edge';
+        steps = ['Open the three-dot menu.', 'Choose Apps.', 'Select Install DD Events and confirm.'];
+    }
+
+    content.innerHTML = `
+        <div class="install-help-browser"><i class="fa-solid fa-compass"></i><div><h3>${escapeDocumentText(title)}</h3><p>The website is working. This browser uses its own install menu instead of Chrome's popup.</p></div></div>
+        <ol class="install-help-steps">${steps.map(step => `<li>${escapeDocumentText(step)}</li>`).join('')}</ol>
+        <div class="install-help-link"><i class="fa-solid fa-link"></i><span>Website link</span><strong>https://dd-events-five.vercel.app</strong></div>`;
+    openModal('install-help-modal');
 }
 
 // ==========================================
@@ -212,22 +479,48 @@ async function triggerAppInstall() {
 const SUPABASE_URL = 'https://razwvjgajaparzjksoll.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJhend2amdhamFwYXJ6amtzb2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMDM0NDMsImV4cCI6MjA5ODg3OTQ0M30.cWqUkKcf6WHs0srbvIqx58kMqSiBXU9NdZy8SBus1OQ';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Staff use the shared portal password rather than Supabase Auth. Keep their
+// database requests isolated from any saved/expired admin session in `sb`.
+const staffSb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+    }
+});
 
 // Set once a real Supabase session is confirmed - used for display and for
 // "you can't remove your own account" checks. Supabase itself persists the
 // actual session token, so this app no longer needs its own auth flags.
 let currentAdminEmail = null;
+let dashboardAutoSyncTimer = null;
+let lastSeenDashboardUpdateAt = '';
+// No shared-data write is allowed until this browser has completed at least
+// one successful read. This prevents a temporary network/read failure from
+// turning an uninitialized local state into a destructive empty save.
+let hasLoadedSharedState = false;
 
 async function initAuth() {
+    stopDashboardAutoSync();
     // localStorage (not sessionStorage) so staff stay logged in even after
     // fully closing and reopening the app - only "Exit" logs them out.
     const isStaffAuthenticated = localStorage.getItem('dd_staff_authenticated') === 'true';
 
     if (isStaffAuthenticated) {
-        hideView('auth-container');
+        showView('auth-container');
         hideView('app-container');
+        hideView('staff-app-container');
+        hideView('password-login-view');
+        hideView('dashboard-load-error-view');
+        showView('auth-loading-view');
+        const loaded = await startStaffPortal();
+        if (!loaded) {
+            showDashboardLoadError();
+            return;
+        }
+        hideView('auth-loading-view');
+        hideView('auth-container');
         showView('staff-app-container');
-        await startStaffPortal();
         return;
     }
 
@@ -235,12 +528,17 @@ async function initAuth() {
     hideView('app-container');
     hideView('staff-app-container');
     hideView('password-login-view');
+    hideView('dashboard-load-error-view');
     showView('auth-loading-view');
 
     const { data: { session } } = await sb.auth.getSession();
 
     if (session && session.user) {
-        await loadState();
+        const loaded = await loadState();
+        if (!loaded) {
+            showDashboardLoadError();
+            return;
+        }
         const email = session.user.email.toLowerCase();
 
         if ((appState.disabledAdminEmails || []).includes(email)) {
@@ -252,6 +550,12 @@ async function initAuth() {
         }
 
         currentAdminEmail = email;
+        // Admin-only tables (finance, sales bills, documents) are guarded by
+        // is_dd_events_admin(), which reads this roster. If the roster ever
+        // loses an email, that admin silently loses database access, so a
+        // confirmed login re-adds itself here.
+        await registerAdminEmailInRoster(email);
+        await loadAdminFinanceEntries();
         hideView('auth-loading-view');
         hideView('auth-container');
         hideView('staff-app-container');
@@ -262,6 +566,21 @@ async function initAuth() {
         showView('password-login-view');
         setAuthMode('admin');
     }
+}
+
+function showDashboardLoadError() {
+    showView('auth-container');
+    hideView('app-container');
+    hideView('staff-app-container');
+    hideView('auth-loading-view');
+    hideView('password-login-view');
+    showView('dashboard-load-error-view');
+}
+
+async function retryDashboardLoad() {
+    hideView('dashboard-load-error-view');
+    showView('auth-loading-view');
+    await initAuth();
 }
 
 // Toggles the login screen between the office/admin login form and the
@@ -302,12 +621,16 @@ function showAdminLoginView() {
 // keep our own roster of known admin emails inside the shared data blob -
 // just for showing/managing the list in Settings.
 async function registerAdminEmailInRoster(email) {
-    await loadState();
+    if (!await loadState()) {
+        showToast('Shared data could not be loaded. The account list was not changed.');
+        return false;
+    }
     if (!appState.adminEmails) appState.adminEmails = [];
     if (!appState.adminEmails.includes(email)) {
         appState.adminEmails.push(email);
         await saveState();
     }
+    return true;
 }
 
 async function handleCreateAdminAccount(e) {
@@ -350,16 +673,31 @@ async function handleStaffLogin(e) {
     e.preventDefault();
     const passwordInput = document.getElementById('staff-login-password');
 
-    const { data, error: fetchError } = await sb.from('dashboard_data').select('staff_password_hash').eq('id', 1).single();
+    let passwordRow = null;
+    let fetchError = null;
+    // Retry once for short mobile-network interruptions. A connection failure
+    // must not be reported as "staff access has not been set up".
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await staffSb.from('dashboard_data').select('staff_password_hash').eq('id', 1).maybeSingle();
+        passwordRow = result.data;
+        fetchError = result.error;
+        if (!fetchError) break;
+    }
 
-    if (fetchError || !data || !data.staff_password_hash) {
+    if (fetchError) {
+        console.error('Staff password lookup failed', fetchError);
+        showToast('Could not connect to staff login. Check your internet and try again.');
+        return;
+    }
+
+    if (!passwordRow || !passwordRow.staff_password_hash) {
         showToast('Staff access has not been set up yet. Please contact your admin.');
         return;
     }
 
     const enteredHash = await sha256(passwordInput.value);
 
-    if (enteredHash === data.staff_password_hash) {
+    if (enteredHash === passwordRow.staff_password_hash) {
         localStorage.setItem('dd_staff_authenticated', 'true');
         hideView('staff-login-error-msg');
         passwordInput.value = '';
@@ -422,9 +760,8 @@ async function loadStaffPasswordStatus() {
 }
 
 function staffLogout() {
+    stopDashboardAutoSync();
     localStorage.removeItem('dd_staff_authenticated');
-    localStorage.removeItem('dd_staff_selected_name');
-    localStorage.removeItem('dd_staff_applicant_name');
     initAuth();
 }
 
@@ -521,7 +858,10 @@ async function addAdminAccount() {
 }
 
 async function deleteAdminAccount(email) {
-    await loadState();
+    if (!await loadState()) {
+        showToast('Shared data could not be loaded. No account was removed.');
+        return;
+    }
     const roster = appState.adminEmails || [];
 
     if (roster.length <= 1) {
@@ -569,9 +909,14 @@ function renderAdminAccountsList() {
 }
 
 function logout() {
+    resetSalesBilling();
+    stopDashboardAutoSync();
     sb.auth.signOut();
     currentAdminEmail = null;
-    appState = { events: [], staff: [], attendance: [], workLogs: [], staffApplications: [], webhooks: {} };
+    hasLoadedSharedState = false;
+    currentEventFinanceEventId = null;
+    adminFinanceEntries = [];
+    appState = { events: [], staff: [], attendance: [], workLogs: [], staffApplications: [], eventStaffAssignments: [], webhooks: {} };
     initAuth();
 }
 
@@ -580,24 +925,158 @@ function logout() {
 // ==========================================
 
 async function loadState() {
-    const { data, error } = await sb.from('dashboard_data').select('data').eq('id', 1).single();
+    const dataClient = localStorage.getItem('dd_staff_authenticated') === 'true' ? staffSb : sb;
+    try {
+        const { data, error } = await dataClient.from('dashboard_data').select('data, updated_at').eq('id', 1).single();
 
-    if (error || !data) {
+        if (error || !data || !data.data || typeof data.data !== 'object') {
+            console.error('Failed to load shared data', error || new Error('Shared dashboard data is missing.'));
+            return false;
+        }
+
+        applyLoadedState(data.data);
+        lastSeenDashboardUpdateAt = data.updated_at || '';
+        hasLoadedSharedState = true;
+        return true;
+    } catch (error) {
         console.error('Failed to load shared data', error);
-        initDefaultState();
-        return;
+        return false;
     }
+}
 
-    appState = data.data || {};
+function applyLoadedState(stateData) {
+    appState = stateData || {};
     if (!appState.webhooks) appState.webhooks = { url: '', triggers: { inquiry: true, payment: true, attendance: true } };
     if (!appState.events) appState.events = [];
     if (!appState.staff) appState.staff = [];
+    appState.staff.forEach(member => { member.workRoles = normalizeStaffWorkRoles(member.workRoles); });
     if (!appState.attendance) appState.attendance = [];
     if (!appState.workLogs) appState.workLogs = [];
     if (!appState.staffApplications) appState.staffApplications = [];
+    appState.staffApplications = mergeStaffApplicationHistory(appState.staffApplications, []);
+    if (!appState.eventStaffAssignments) appState.eventStaffAssignments = [];
+    appState.eventStaffAssignments = mergeEventStaffAssignmentLedger(appState.eventStaffAssignments, []);
     if (!appState.adminEmails) appState.adminEmails = [];
     if (!appState.disabledAdminEmails) appState.disabledAdminEmails = [];
     if (!appState.muhurthamDates) appState.muhurthamDates = getDefaultMuhurthamDates();
+
+    appState.events.forEach(event => {
+        if (!Array.isArray(event.documents)) event.documents = [];
+        if (typeof event.documentNotes !== 'string') event.documentNotes = '';
+        if (!event.documentServiceNotes || typeof event.documentServiceNotes !== 'object' || Array.isArray(event.documentServiceNotes)) event.documentServiceNotes = {};
+        syncEventStage(event);
+        getQuotationDocument(event);
+
+        // Events that had already crossed the quotation stage before this
+        // update still need an invoice document built from their saved data.
+        if (event.stageIndex >= 2) getInvoiceDocument(event);
+    });
+}
+
+// Internal event finance is intentionally stored outside dashboard_data.
+// Staff load dashboard_data through their shared portal, so putting private
+// costs there would expose them even if the UI button were hidden.
+function normalizeAdminFinanceEntry(row) {
+    return {
+        id: row.id,
+        eventId: String(row.event_id || ''),
+        entryType: row.entry_type === 'investment' ? 'investment' : 'expense',
+        serviceKey: String(row.service_key || ''),
+        serviceName: String(row.service_name || 'General'),
+        category: String(row.category || 'Other'),
+        amount: Number(row.amount) || 0,
+        notes: String(row.notes || ''),
+        createdBy: String(row.created_by || ''),
+        createdAt: row.created_at || ''
+    };
+}
+
+function getAdminFinanceSignature(entries = adminFinanceEntries) {
+    return JSON.stringify(entries.map(entry => [entry.id, entry.amount, entry.notes, entry.createdAt]));
+}
+
+async function loadAdminFinanceEntries(silent = false) {
+    if (!currentAdminEmail) return false;
+    const previousSignature = getAdminFinanceSignature();
+    const { data, error } = await sb
+        .from('event_finance_entries')
+        .select('id,event_id,entry_type,service_key,service_name,category,amount,notes,created_by,created_at')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Admin finance entries could not be loaded', error);
+        if (!silent) showToast('Admin finance data could not be loaded. Please try again.');
+        return false;
+    }
+
+    adminFinanceEntries = (data || []).map(normalizeAdminFinanceEntry);
+    return previousSignature !== getAdminFinanceSignature();
+}
+
+function getEventFinanceEntries(eventId) {
+    if (!currentAdminEmail) return [];
+    return adminFinanceEntries.filter(entry => String(entry.eventId) === String(eventId));
+}
+
+function getEventFinanceTotals(event) {
+    const totals = { expenses: 0, investments: 0, labor: 0, revenue: 0, profit: 0 };
+    if (!event || !currentAdminEmail) return totals;
+    getEventFinanceEntries(event.id).forEach(entry => {
+        if (entry.entryType === 'investment') totals.investments += entry.amount;
+        else totals.expenses += entry.amount;
+        if (entry.entryType === 'expense' && entry.category === 'Labor') totals.labor += entry.amount;
+    });
+    totals.revenue = getEventInvoiceCalculations(event).grandTotal;
+    totals.profit = totals.revenue - totals.expenses - totals.investments;
+    return totals;
+}
+
+function getStaffProfileRevision(state = appState) {
+    return JSON.stringify((state.staff || []).map(member => ({
+        id: member.id,
+        updatedAt: member.updatedAt || '',
+        name: member.name || '',
+        phone: member.phone || '',
+        address: member.address || '',
+        department: member.department || member.role || '',
+        photoUpdatedAt: member.photoUpdatedAt || ''
+    })));
+}
+
+function stopDashboardAutoSync() {
+    if (!dashboardAutoSyncTimer) return;
+    clearInterval(dashboardAutoSyncTimer);
+    dashboardAutoSyncTimer = null;
+}
+
+async function syncAdminDashboardChanges() {
+    if (!currentAdminEmail || document.visibilityState !== 'visible' || _saveInFlight || Date.now() - _lastSaveAt < 4000) return;
+
+    const financeChanged = await loadAdminFinanceEntries(true);
+    const { data, error } = await sb.from('dashboard_data').select('data, updated_at').eq('id', 1).single();
+    if (error || !data || data.updated_at === lastSeenDashboardUpdateAt) {
+        if (financeChanged) {
+            renderEventsList();
+            refreshActivePipelineStage();
+            if (!document.getElementById('event-expenses-modal')?.classList.contains('hidden')) renderEventFinanceModal();
+        }
+        return;
+    }
+
+    const previousStaffRevision = getStaffProfileRevision();
+    applyLoadedState(data.data || {});
+    lastSeenDashboardUpdateAt = data.updated_at || '';
+    refreshAllViews();
+    renderAdminAccountsList();
+
+    if (getStaffProfileRevision() !== previousStaffRevision) {
+        showToast('Staff profiles updated automatically.');
+    }
+}
+
+function startDashboardAutoSync() {
+    stopDashboardAutoSync();
+    dashboardAutoSyncTimer = setInterval(syncAdminDashboardChanges, 5000);
 }
 
 // Sample/approximate dates spanning traditional Tamil wedding-season months
@@ -624,6 +1103,7 @@ function initDefaultState() {
         attendance: [],
         workLogs: [],
         staffApplications: [],
+        eventStaffAssignments: [],
         adminEmails: [],
         disabledAdminEmails: [],
         muhurthamDates: getDefaultMuhurthamDates(),
@@ -632,14 +1112,238 @@ function initDefaultState() {
             triggers: { inquiry: true, payment: true, attendance: true }
         }
     };
-    saveState();
+    // This is intentionally local-only. Persisting a default state without a
+    // confirmed server read could erase the shared dashboard.
 }
 
-async function saveState() {
-    const { error } = await sb.from('dashboard_data').update({ data: appState, updated_at: new Date().toISOString() }).eq('id', 1);
-    if (error) {
-        console.error('Failed to save shared data', error);
+let _saveInFlight = false;
+let _lastSaveAt = 0;
+let _saveQueue = Promise.resolve();
+
+function normalizeStaffPhone(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function getStaffApplicationIdentity(application) {
+    const phone = normalizeStaffPhone(application.phone);
+    if (phone) return `phone:${phone}`;
+    if (application.staffId) return `id:${String(application.staffId)}`;
+    const name = String(application.staffName || '').trim().toLowerCase();
+    const department = String(application.department || '').trim().toLowerCase();
+    return `legacy:${name}|${department}`;
+}
+
+function choosePersistentStaffApplication(first, second) {
+    if (!first) return cloneDocumentData(second);
+    if (!second) return cloneDocumentData(first);
+
+    const statusRank = { pending: 1, rejected: 2, approved: 3 };
+    const firstRank = statusRank[first.status] || 0;
+    const secondRank = statusRank[second.status] || 0;
+    let preferred = first;
+    let fallback = second;
+
+    // A completed admin decision must never be replaced by a stale pending
+    // application. If two decisions exist, keep the most recently decided one.
+    if (secondRank > firstRank) {
+        preferred = second;
+        fallback = first;
+    } else if (secondRank === firstRank) {
+        const firstTime = new Date(first.decidedAt || first.appliedAt || 0).getTime() || 0;
+        const secondTime = new Date(second.decidedAt || second.appliedAt || 0).getTime() || 0;
+        if (secondTime > firstTime) {
+            preferred = second;
+            fallback = first;
+        }
     }
+
+    return { ...cloneDocumentData(fallback), ...cloneDocumentData(preferred) };
+}
+
+function mergeStaffApplicationHistory(localApplications = [], serverApplications = []) {
+    const byId = new Map();
+    [...serverApplications, ...localApplications].forEach(application => {
+        if (!application || !application.eventId) return;
+        const idKey = application.id || `${application.eventId}|${getStaffApplicationIdentity(application)}`;
+        byId.set(idKey, choosePersistentStaffApplication(byId.get(idKey), application));
+    });
+
+    // Older browser versions could create a second record for the same staff
+    // and event. Collapse those records while preserving the final decision.
+    const byEventAndStaff = new Map();
+    byId.forEach(application => {
+        const historyKey = `${String(application.eventId)}|${getStaffApplicationIdentity(application)}`;
+        byEventAndStaff.set(historyKey, choosePersistentStaffApplication(byEventAndStaff.get(historyKey), application));
+    });
+    return [...byEventAndStaff.values()];
+}
+
+function chooseLatestEventStaffAssignment(first, second) {
+    if (!first) return cloneDocumentData(second);
+    if (!second) return cloneDocumentData(first);
+    const firstTime = new Date(first.updatedAt || first.createdAt || 0).getTime() || 0;
+    const secondTime = new Date(second.updatedAt || second.createdAt || 0).getTime() || 0;
+    const preferred = secondTime >= firstTime ? second : first;
+    const fallback = preferred === second ? first : second;
+    return { ...cloneDocumentData(fallback), ...cloneDocumentData(preferred) };
+}
+
+function mergeEventStaffAssignmentLedger(localAssignments = [], serverAssignments = []) {
+    const assignments = new Map();
+    [...serverAssignments, ...localAssignments].forEach(assignment => {
+        if (!assignment || !assignment.id || !assignment.eventId) return;
+        assignments.set(assignment.id, chooseLatestEventStaffAssignment(assignments.get(assignment.id), assignment));
+    });
+    return [...assignments.values()];
+}
+
+function mergeEventDocumentChanges(localEvents = [], serverEvents = []) {
+    const serverById = new Map(serverEvents.map(event => [String(event.id), event]));
+    return localEvents.map(event => {
+        const serverEvent = serverById.get(String(event.id));
+        if (!serverEvent) return event;
+        const localTime = new Date(event.documentsUpdatedAt || 0).getTime() || 0;
+        const serverTime = new Date(serverEvent.documentsUpdatedAt || 0).getTime() || 0;
+        const source = serverTime > localTime ? serverEvent : event;
+        return {
+            ...event,
+            documents: cloneDocumentData(source.documents || []),
+            documentNotes: source.documentNotes || '',
+            documentsUpdatedAt: source.documentsUpdatedAt || event.documentsUpdatedAt || ''
+        };
+    });
+}
+
+function normalizeStaffWorkRoles(value) {
+    const source = Array.isArray(value) ? value : String(value || '').split(/[\n,]+/);
+    const seen = new Set();
+    return source.map(role => String(role || '').trim()).filter(role => {
+        const key = role.toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    }).slice(0, 30);
+}
+
+function mergeStaffWorkRoleChanges(localStaff = [], serverStaff = []) {
+    const serverById = new Map(serverStaff.map(member => [String(member.id), member]));
+    return localStaff.map(member => {
+        const serverMember = serverById.get(String(member.id));
+        if (!serverMember) return { ...member, workRoles: normalizeStaffWorkRoles(member.workRoles) };
+        const localTime = new Date(member.workRolesUpdatedAt || 0).getTime() || 0;
+        const serverTime = new Date(serverMember.workRolesUpdatedAt || 0).getTime() || 0;
+        const roleSource = serverTime > localTime ? serverMember : member;
+        return {
+            ...member,
+            workRoles: normalizeStaffWorkRoles(roleSource.workRoles),
+            workRolesUpdatedAt: roleSource.workRolesUpdatedAt || member.workRolesUpdatedAt || ''
+        };
+    });
+}
+
+function saveState() {
+    if (!hasLoadedSharedState) {
+        console.error('Blocked shared-data save because no successful load has completed.');
+        showToast('Data is not loaded. Nothing was saved. Please reconnect and try again.');
+        return Promise.resolve(false);
+    }
+
+    // Snapshot at request time, serialize writes, then merge the latest server
+    // application history before an optimistic update. This prevents any
+    // unrelated admin/staff edit from erasing existing apply/approval actions.
+    const stateSnapshot = cloneDocumentData(appState);
+    _lastSaveAt = Date.now();
+
+    _saveQueue = _saveQueue.catch(() => {}).then(async () => {
+        _saveInFlight = true;
+        const dataClient = localStorage.getItem('dd_staff_authenticated') === 'true' ? staffSb : sb;
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            const { data: latestRow, error: readError } = await dataClient
+                .from('dashboard_data')
+                .select('data, updated_at')
+                .eq('id', 1)
+                .single();
+            if (readError || !latestRow) {
+                console.error('Failed to read latest shared data before save', readError);
+                return false;
+            }
+
+            const mergedSnapshot = cloneDocumentData(stateSnapshot);
+            mergedSnapshot.events = mergeEventDocumentChanges(
+                stateSnapshot.events || [],
+                latestRow.data?.events || []
+            );
+            mergedSnapshot.staff = mergeStaffWorkRoleChanges(
+                stateSnapshot.staff || [],
+                latestRow.data?.staff || []
+            );
+            mergedSnapshot.staffApplications = mergeStaffApplicationHistory(
+                stateSnapshot.staffApplications || [],
+                latestRow.data?.staffApplications || []
+            );
+            mergedSnapshot.eventStaffAssignments = mergeEventStaffAssignmentLedger(
+                stateSnapshot.eventStaffAssignments || [],
+                latestRow.data?.eventStaffAssignments || []
+            );
+            // A save that empties a list the server still has data in is almost
+            // always an accident (a stale tab, a half-loaded state), and it costs
+            // the whole office its records. Refuse it and keep the server copy.
+            const wipedLists = ['events', 'staff', 'attendance', 'workLogs'].filter(key => {
+                const serverCount = (latestRow.data?.[key] || []).length;
+                const outgoingCount = (mergedSnapshot[key] || []).length;
+                return serverCount > 0 && outgoingCount === 0;
+            });
+            if (wipedLists.length) {
+                console.error('Blocked a shared-data save that would erase:', wipedLists.join(', '));
+                showToast(`Save blocked: this would erase all ${wipedLists.join(' and ')}. Reload the page and try again.`);
+                return false;
+            }
+
+            const updateTimestamp = new Date().toISOString();
+            const { data: savedRows, error: saveError } = await dataClient
+                .from('dashboard_data')
+                .update({ data: mergedSnapshot, updated_at: updateTimestamp })
+                .eq('id', 1)
+                .eq('updated_at', latestRow.updated_at)
+                .select('updated_at');
+
+            if (saveError) {
+                console.error('Failed to save shared data', saveError);
+                return false;
+            }
+
+            if (savedRows && savedRows.length > 0) {
+                lastSeenDashboardUpdateAt = updateTimestamp;
+                appState.staffApplications = mergeStaffApplicationHistory(
+                    appState.staffApplications || [],
+                    mergedSnapshot.staffApplications
+                );
+                appState.eventStaffAssignments = mergeEventStaffAssignmentLedger(
+                    appState.eventStaffAssignments || [],
+                    mergedSnapshot.eventStaffAssignments
+                );
+                appState.events = mergeEventDocumentChanges(
+                    appState.events || [],
+                    mergedSnapshot.events || []
+                );
+                appState.staff = mergeStaffWorkRoleChanges(
+                    appState.staff || [],
+                    mergedSnapshot.staff || []
+                );
+                return true;
+            }
+            // Another device saved between our read and write. Re-read, merge,
+            // and retry instead of overwriting its newer application history.
+        }
+        console.error('Could not save shared data after concurrent update retries.');
+        return false;
+    }).finally(() => {
+        _saveInFlight = false;
+        _lastSaveAt = Date.now();
+    });
+
+    return _saveQueue;
 }
 
 // ==========================================
@@ -649,10 +1353,12 @@ async function saveState() {
 async function startApplication() {
     // appState is already loaded by initAuth() before this runs.
     populatePresetServicePickers();
+    populateStaffDepartmentSelects();
     switchTab('dashboard');
     refreshAllViews();
     renderAdminAccountsList();
     refreshAdminNotifyUI();
+    startDashboardAutoSync();
 
     const today = getTodayDateString();
     document.getElementById('event-date').value = today;
@@ -665,13 +1371,189 @@ async function startApplication() {
 // ==========================================
 
 async function startStaffPortal() {
-    await loadState();
-    populateWorklogStaffSelect();
+    const loaded = await loadState();
+    if (!loaded) return false;
+    populateStaffDepartmentSelects();
     document.getElementById('worklog-date').value = getTodayDateString();
     document.getElementById('worklog-time').value = getCurrentTimeString();
+    const profile = getCurrentStaffProfile();
+    if (profile) {
+        showStaffPortalForProfile(profile);
+    } else {
+        showStaffProfilePanel();
+    }
+    return true;
+}
+
+function populateStaffDepartmentSelects() {
+    ['staff-profile-department', 'new-staff-role'].forEach(id => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        const selected = select.value;
+        select.innerHTML = '<option value="">-- Select Department --</option>' +
+            staffDepartments.map(department => `<option value="${escapeDocumentText(department)}">${escapeDocumentText(department)}</option>`).join('');
+        select.value = selected;
+    });
+}
+
+function getCurrentStaffProfile() {
+    const profileId = localStorage.getItem('dd_staff_profile_id') || getStaffProfileIdCookie();
+    let profile = profileId ? appState.staff.find(member => member.id === profileId) || null : null;
+
+    // Recover older/partial browser sessions where the profile ID is missing
+    // but the saved phone/name is still available. Only accept a unique match.
+    if (!profile) {
+        const savedPhone = (localStorage.getItem('dd_staff_profile_phone') || '').replace(/\D/g, '');
+        if (savedPhone) {
+            const phoneMatches = appState.staff.filter(member => (member.phone || '').replace(/\D/g, '') === savedPhone);
+            if (phoneMatches.length === 1) profile = phoneMatches[0];
+        }
+    }
+
+    if (!profile) {
+        const savedName = (localStorage.getItem('dd_staff_selected_name') || localStorage.getItem('dd_staff_applicant_name') || '').trim().toLowerCase();
+        if (savedName) {
+            const nameMatches = appState.staff.filter(member => (member.name || '').trim().toLowerCase() === savedName);
+            if (nameMatches.length === 1) profile = nameMatches[0];
+        }
+    }
+
+    if (profile) rememberStaffProfile(profile);
+    return profile;
+}
+
+function getStaffProfileIdCookie() {
+    const cookie = document.cookie.split('; ').find(entry => entry.startsWith('dd_staff_profile_id='));
+    return cookie ? decodeURIComponent(cookie.substring(cookie.indexOf('=') + 1)) : '';
+}
+
+function rememberStaffProfile(profile) {
+    if (!profile) return;
+    localStorage.setItem('dd_staff_profile_id', profile.id);
+    localStorage.setItem('dd_staff_profile_phone', profile.phone || '');
+    localStorage.setItem('dd_staff_selected_name', profile.name || '');
+    localStorage.setItem('dd_staff_applicant_name', profile.name || '');
+    document.cookie = `dd_staff_profile_id=${encodeURIComponent(profile.id)}; Max-Age=31536000; Path=/; SameSite=Lax; Secure`;
+}
+
+function showStaffProfilePanel(profile = null) {
+    showView('staff-profile-panel');
+    hideView('staff-portal-content');
+    const form = document.getElementById('staff-profile-form');
+    form.reset();
+    document.getElementById('staff-profile-id').value = profile ? profile.id : '';
+    pendingStaffProfilePhoto = profile?.photoData || '';
+    updateStaffPhotoPreview(pendingStaffProfilePhoto);
+    document.getElementById('staff-photo-status').textContent = '';
+    if (profile) {
+        document.getElementById('staff-profile-name').value = profile.name || '';
+        document.getElementById('staff-profile-address').value = profile.address || '';
+        document.getElementById('staff-profile-phone').value = profile.phone || '';
+        document.getElementById('staff-profile-department').value = profile.department || profile.role || '';
+    }
+}
+
+function editStaffProfile() {
+    const profile = getCurrentStaffProfile();
+    if (profile) showStaffProfilePanel(profile);
+}
+
+async function saveStaffProfile() {
+    const id = document.getElementById('staff-profile-id').value || `stf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const name = document.getElementById('staff-profile-name').value.trim();
+    const address = document.getElementById('staff-profile-address').value.trim();
+    const phone = document.getElementById('staff-profile-phone').value.trim();
+    const department = document.getElementById('staff-profile-department').value;
+    if (!name || !address || !phone || !department) {
+        showToast('Please complete all profile details.');
+        return;
+    }
+
+    // Staff may leave the portal open while admins edit other records. Merge
+    // the profile into the latest shared document so saving it does not write
+    // an older in-memory copy over newer admin work.
+    const { data: latestRow, error: latestError } = await staffSb.from('dashboard_data').select('data').eq('id', 1).single();
+    if (latestError || !latestRow) {
+        console.error('Could not refresh data before saving staff profile', latestError);
+        showToast('Could not save profile right now. Please try again.');
+        return;
+    }
+    applyLoadedState(latestRow.data || {});
+
+    const duplicatePhone = appState.staff.find(member => member.id !== id && member.phone && member.phone.replace(/\D/g, '') === phone.replace(/\D/g, ''));
+    if (duplicatePhone) {
+        showToast('A staff profile already uses this phone number. Please contact admin.');
+        return;
+    }
+
+    const existingIndex = appState.staff.findIndex(member => member.id === id);
+    const profile = {
+        ...(existingIndex >= 0 ? appState.staff[existingIndex] : {}),
+        id,
+        name,
+        address,
+        phone,
+        department,
+        role: department,
+        photoData: pendingStaffProfilePhoto,
+        selfCreated: true,
+        updatedAt: new Date().toISOString()
+    };
+    if ((existingIndex < 0 && profile.photoData) || (existingIndex >= 0 && profile.photoData !== appState.staff[existingIndex].photoData)) {
+        profile.photoUpdatedAt = profile.updatedAt;
+    }
+    if (!profile.createdAt) profile.createdAt = profile.updatedAt;
+    if (existingIndex >= 0) appState.staff[existingIndex] = profile;
+    else appState.staff.push(profile);
+
+    await saveState();
+    rememberStaffProfile(profile);
+    await updateExistingStaffSubscription(profile);
+    showToast(existingIndex >= 0 ? 'Profile updated successfully.' : 'Profile saved successfully.');
+    showStaffPortalForProfile(profile);
+}
+
+function showStaffPortalForProfile(profile) {
+    hideView('staff-profile-panel');
+    showView('staff-portal-content');
+    document.getElementById('worklog-staff-select').value = profile.name;
+    document.getElementById('staff-current-name').textContent = profile.name;
+    document.getElementById('staff-current-department').textContent = profile.department || profile.role || 'Department not set';
+    const workRolesElement = document.getElementById('staff-current-work-roles');
+    const workRoles = normalizeStaffWorkRoles(profile.workRoles);
+    workRolesElement.innerHTML = workRoles.length
+        ? `<span>Assigned works:</span> ${workRoles.map(role => `<strong>${escapeDocumentText(role)}</strong>`).join('')}`
+        : '<span>Specific work is not assigned yet.</span>';
+    const avatar = document.getElementById('staff-current-avatar');
+    const safeProfilePhoto = getSafeStaffPhoto(profile.photoData);
+    avatar.innerHTML = safeProfilePhoto
+        ? `<img src="${safeProfilePhoto}" alt="${escapeDocumentText(profile.name)} profile photo">`
+        : '<i class="fa-solid fa-user"></i>';
+    rememberStaffProfile(profile);
     renderMyWorkLogs();
     renderAvailableEventsForStaff();
     refreshStaffNotifyUI();
+    updateExistingStaffSubscription(profile);
+}
+
+async function updateExistingStaffSubscription(profile) {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        if (!subscription) return;
+        const subJson = subscription.toJSON();
+        await staffSb.from('push_subscriptions').upsert({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+            subscriber_name: profile.name,
+            subscriber_role: 'staff',
+            subscriber_department: profile.department || profile.role || '',
+            staff_profile_id: profile.id
+        }, { onConflict: 'endpoint' });
+    } catch (err) {
+        console.error('Could not update staff notification profile', err);
+    }
 }
 
 // ==========================================
@@ -743,13 +1625,19 @@ async function enableStaffNotifications() {
         }
 
         const subJson = subscription.toJSON();
-        const staffName = localStorage.getItem('dd_staff_applicant_name') || document.getElementById('worklog-staff-select').value || '';
+        const profile = getCurrentStaffProfile();
+        if (!profile) {
+            showToast('Please create your staff profile before enabling notifications.');
+            return;
+        }
 
-        await sb.from('push_subscriptions').upsert({
+        await staffSb.from('push_subscriptions').upsert({
             endpoint: subJson.endpoint,
             keys: subJson.keys,
-            subscriber_name: staffName,
-            subscriber_role: 'staff'
+            subscriber_name: profile.name,
+            subscriber_role: 'staff',
+            subscriber_department: profile.department || profile.role || '',
+            staff_profile_id: profile.id
         }, { onConflict: 'endpoint' });
 
         showToast('Notifications enabled! You\'ll be alerted when a new event is booked.');
@@ -834,7 +1722,7 @@ async function enableAdminNotifications() {
 
 // Broadcasts a push notification to every subscribed device - both staff and
 // admin, since booking/request/approval updates all matter to both sides.
-async function sendPushBroadcast(title, body) {
+async function sendPushBroadcast(title, body, targeting = {}) {
     try {
         await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
             method: 'POST',
@@ -842,7 +1730,7 @@ async function sendPushBroadcast(title, body) {
                 'Content-Type': 'application/json',
                 'apikey': SUPABASE_ANON_KEY
             },
-            body: JSON.stringify({ title, body, url: './' })
+            body: JSON.stringify({ title, body, url: './', ...targeting })
         });
     } catch (err) {
         console.error('Failed to send push notification', err);
@@ -850,50 +1738,48 @@ async function sendPushBroadcast(title, body) {
 }
 
 async function notifyStaffOfBookedEvent(evt) {
-    await sendPushBroadcast(
-        'New Event Booked!',
-        `${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)} at ${evt.venue || 'venue TBD'}. Apply now!`
-    );
+    if (!isUpcomingStaffWorkEvent(evt)) return;
+    const departments = getEventDepartments(evt);
+    if (departments.length === 0) return;
+    await Promise.all(departments.map(department => sendPushBroadcast(
+        'New Department Work',
+        `Date: ${formatDisplayDate(evt.eventDate)}\nLocation: ${evt.venue || 'Not set'}\nDepartment: ${department}`,
+        { audienceRole: 'staff', departments: [department] }
+    )));
 }
 
 async function notifyAdminOfWorkRequest(evt, staffName) {
     await sendPushBroadcast(
         'New Work Request',
-        `${staffName} wants to work on ${evt.clientName} - ${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)}.`
+        `${staffName} wants to work on ${evt.clientName} - ${getEventServiceDescriptions(evt).join(', ')} on ${formatDisplayDate(evt.eventDate)}.`,
+        { audienceRole: 'admin' }
     );
 }
 
-async function notifyStaffOfApprovalDecision(evt, staffName, decision) {
-    const decisionText = decision === 'approved' ? 'approved - you can come to work!' : 'not selected this time.';
+async function notifyStaffOfApprovalDecision(evt, staffName, decision, staffProfileId = '', department = '') {
     await sendPushBroadcast(
-        decision === 'approved' ? 'Work Request Approved!' : 'Work Request Update',
-        `${staffName}, your request for ${evt.clientName} (${formatDisplayDate(evt.eventDate)}) was ${decisionText}`
+        decision === 'approved' ? 'Work Approved' : 'Work Request Update',
+        `Date: ${formatDisplayDate(evt.eventDate)}\nLocation: ${evt.venue || 'Not set'}\nDepartment: ${department || 'Not set'}`,
+        { audienceRole: 'staff', staffProfileId, subscriberName: staffName }
     );
 }
 
 function populateWorklogStaffSelect() {
-    const select = document.getElementById('worklog-staff-select');
-    // localStorage (not sessionStorage) so this survives the app being fully
-    // closed and reopened, not just reloaded.
-    const savedName = localStorage.getItem('dd_staff_selected_name') || '';
-
-    select.innerHTML = '<option value="">-- Select your name --</option>' +
-        appState.staff.map(s => `<option value="${s.name}" ${s.name === savedName ? 'selected' : ''}>${s.name} (${s.role})</option>`).join('');
+    const profile = getCurrentStaffProfile();
+    document.getElementById('worklog-staff-select').value = profile ? profile.name : '';
 }
 
 function onWorklogStaffChange() {
-    const name = document.getElementById('worklog-staff-select').value;
-    localStorage.setItem('dd_staff_selected_name', name);
-    renderMyWorkLogs();
-    renderAvailableEventsForStaff();
+    populateWorklogStaffSelect();
 }
 
 function submitWorkLog() {
-    const staffName = document.getElementById('worklog-staff-select').value;
-    if (!staffName) {
-        showToast('Please select your name first.');
+    const profile = getCurrentStaffProfile();
+    if (!profile) {
+        showToast('Please create your profile first.');
         return;
     }
+    const staffName = profile.name;
 
     const date = document.getElementById('worklog-date').value;
     const time = document.getElementById('worklog-time').value;
@@ -902,7 +1788,9 @@ function submitWorkLog() {
 
     appState.workLogs.push({
         id: 'wl_' + Date.now(),
+        staffId: profile.id,
         staffName,
+        department: profile.department || profile.role || '',
         date,
         time,
         location,
@@ -925,9 +1813,10 @@ function renderMyWorkLogs() {
     const tbody = document.getElementById('worklog-my-list-tbody');
     if (!tbody) return;
 
-    const staffName = document.getElementById('worklog-staff-select').value;
+    const profile = getCurrentStaffProfile();
+    const staffName = profile ? profile.name : '';
     const logs = appState.workLogs
-        .filter(l => !staffName || l.staffName === staffName)
+        .filter(l => profile && (l.staffId === profile.id || (!l.staffId && l.staffName === staffName)))
         .sort((a, b) => new Date(b.loggedAt) - new Date(a.loggedAt))
         .slice(0, 20);
 
@@ -983,12 +1872,26 @@ function filterWorkLogs() {
 // 3C. EVENT STAFFING - staff apply from the portal, admin approves
 // ==========================================
 
-// Events become visible to staff the moment admin approves the "Advance Pay /
-// Date Booked" stage (or any stage after it) - shared appState, no extra sync needed.
+// Once a booking reaches Advance Pay, keep it visible to the relevant staff
+// until its event date has passed. Admin may move a future booking to a later
+// billing stage or tick HELD/COMPLETED early; neither should make that future
+// work disappear from the staff portal.
+function isUpcomingStaffWorkEvent(evt) {
+    const eventDate = String(evt.eventDate || '');
+    return eventDate >= getTodayDateString()
+        && getStageIndex(evt.status) >= getStageIndex('advance-paid');
+}
+
 function getBookedEventsForStaff() {
     return appState.events
-        .filter(evt => getStageIndex(evt.status) >= getStageIndex('advance-paid'))
-        .sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
+        .filter(isUpcomingStaffWorkEvent)
+        // Keep every booking, including multiple events on the same date.
+        // The secondary ID comparison only makes their order stable; it does
+        // not group or de-duplicate them.
+        .sort((a, b) => {
+            const dateOrder = String(a.eventDate || '').localeCompare(String(b.eventDate || ''));
+            return dateOrder || String(a.id || '').localeCompare(String(b.id || ''));
+        });
 }
 
 // The "Primary Service Type" (e.g. "Full Wedding Planning") only labels the
@@ -1002,6 +1905,78 @@ function getEventServiceDescriptions(evt) {
     return [evt.serviceType];
 }
 
+function getEventDepartments(evt) {
+    const subServices = (evt.items || []).flatMap(item => (item.subItems || []).map(getSubItemDescription));
+    const searchable = [evt.serviceType, ...getEventServiceDescriptions(evt), ...subServices]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+    return staffDepartments.filter(department => {
+        const keywords = departmentKeywords[department] || [department.toLowerCase()];
+        return keywords.some(keyword => searchable.includes(keyword.toLowerCase()));
+    });
+}
+
+function eventMatchesStaffDepartment(evt, profile) {
+    const department = profile && (profile.department || profile.role);
+    return !!department && getEventDepartments(evt).includes(department);
+}
+
+function getStaffApplicationForEvent(evt, profile) {
+    if (!evt || !profile) return null;
+
+    const staffId = String(profile.id || '');
+    const staffName = String(profile.name || '').trim().toLowerCase();
+    const staffPhone = normalizeStaffPhone(profile.phone);
+    const staffDepartment = String(profile.department || profile.role || '').trim().toLowerCase();
+    return appState.staffApplications.find(application => {
+        if (String(application.eventId || '') !== String(evt.id || '')) return false;
+
+        const applicationStaffId = String(application.staffId || '');
+        if (staffId && applicationStaffId && applicationStaffId === staffId) return true;
+
+        // Phone survives browser storage loss and profile recreation, so an
+        // approved application still belongs to the same real person.
+        const applicationPhone = normalizeStaffPhone(application.phone);
+        if (staffPhone && applicationPhone && applicationPhone === staffPhone) return true;
+
+        const applicationName = String(application.staffName || '').trim().toLowerCase();
+        const applicationDepartment = String(application.department || '').trim().toLowerCase();
+        return !!staffName && applicationName === staffName &&
+            (!applicationStaffId || !staffId) &&
+            (!applicationDepartment || !staffDepartment || applicationDepartment === staffDepartment);
+    }) || null;
+}
+
+function renderStaffWorkCard(evt, profile, application) {
+    let actionHTML;
+    if (application && application.status === 'approved') {
+        actionHTML = '<div class="stage-final-tag" style="margin-top: 10px;"><i class="fa-solid fa-circle-check"></i> Approved - you can come to work!</div>';
+    } else if (application && application.status === 'pending') {
+        actionHTML = '<div class="approval-status-tag pending"><i class="fa-solid fa-hourglass-half"></i> Pending Admin Approval</div>';
+    } else if (application && application.status === 'rejected') {
+        actionHTML = '<div class="approval-status-tag rejected"><i class="fa-solid fa-circle-xmark"></i> Not Selected for This Event</div>';
+    } else {
+        actionHTML = `
+            <div class="apply-inline-form">
+                <button class="btn primary-btn btn-block" style="margin-top: 8px;" onclick="applyForEventWork('${escapeDocumentText(evt.id)}')">
+                    <i class="fa-solid fa-hand"></i> Apply to Work
+                </button>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="kanban-card" data-event-id="${escapeDocumentText(evt.id)}">
+            <h4><i class="fa-solid fa-briefcase"></i> Department Work</h4>
+            <p><strong>Date:</strong> ${formatDisplayDate(evt.eventDate)}</p>
+            <p><strong>Location:</strong> ${escapeDocumentText(evt.venue || 'Not set')}</p>
+            <p><strong>Department:</strong> ${escapeDocumentText(profile.department || profile.role)}</p>
+            ${actionHTML}
+        </div>
+    `;
+}
+
 function renderAvailableEventsForStaff() {
     const container = document.getElementById('staff-available-events');
     if (!container) return;
@@ -1013,65 +1988,51 @@ function renderAvailableEventsForStaff() {
     // survives the app being fully closed and reopened, not just reloaded -
     // otherwise returning staff would see a blank "apply" form again even
     // after already being approved.
-    const myName = localStorage.getItem('dd_staff_applicant_name') || '';
-    const events = getBookedEventsForStaff();
+    const profile = getCurrentStaffProfile();
+    if (!profile) {
+        container.innerHTML = '<div class="empty-notifications">Create your staff profile to see department work.</div>';
+        return;
+    }
+    const events = getBookedEventsForStaff().filter(evt => eventMatchesStaffDepartment(evt, profile));
 
     if (events.length === 0) {
-        container.innerHTML = '<div class="empty-notifications">No booked events yet. Check back once admin locks a booking date.</div>';
+        container.innerHTML = `<div class="empty-notifications">No booked work is currently available for ${escapeDocumentText(profile.department || profile.role)}.</div>`;
         return;
     }
 
-    container.innerHTML = events.map(evt => {
-        const myApplication = myName
-            ? appState.staffApplications.find(a => a.eventId === evt.id && a.staffName.toLowerCase() === myName.toLowerCase())
-            : null;
+    const workItems = events.map(evt => ({
+        event: evt,
+        application: getStaffApplicationForEvent(evt, profile)
+    }));
+    const availableWork = workItems.filter(item => !item.application);
+    const appliedWork = workItems.filter(item => !!item.application);
 
-        let actionHTML;
-        if (myApplication && myApplication.status === 'approved') {
-            actionHTML = '<div class="stage-final-tag" style="margin-top: 10px;"><i class="fa-solid fa-circle-check"></i> Approved - you can come to work!</div>';
-        } else if (myApplication && myApplication.status === 'pending') {
-            actionHTML = '<div class="approval-status-tag pending"><i class="fa-solid fa-hourglass-half"></i> Pending Admin Approval</div>';
-        } else if (myApplication && myApplication.status === 'rejected') {
-            actionHTML = '<div class="approval-status-tag rejected"><i class="fa-solid fa-circle-xmark"></i> Not Selected for This Event</div>';
-        } else {
-            const safeName = myName.replace(/"/g, '&quot;');
-            actionHTML = `
-                <div class="apply-inline-form">
-                    <input type="text" id="apply-name-${evt.id}" placeholder="Your name" class="form-control" value="${safeName}">
-                    <input type="tel" id="apply-phone-${evt.id}" placeholder="Your phone number" class="form-control" style="margin-top: 8px;">
-                    <button class="btn primary-btn btn-block" style="margin-top: 8px;" onclick="applyForEventWork('${evt.id}')">
-                        <i class="fa-solid fa-hand"></i> Apply to Work
-                    </button>
-                </div>
-            `;
-        }
-
-        return `
-            <div class="kanban-card">
-                <h4>${evt.clientName}</h4>
-                <p><i class="fa-solid fa-calendar-day"></i> ${formatDisplayDate(evt.eventDate)}</p>
-                <p><i class="fa-solid fa-location-dot"></i> ${evt.venue || 'Venue not set'}</p>
-                <p><i class="fa-solid fa-tags"></i> ${evt.serviceType}</p>
-                <div class="event-services-list">
-                    <strong>Services included:</strong>
-                    <ul>${getEventServiceDescriptions(evt).map(desc => `<li>${desc}</li>`).join('')}</ul>
-                </div>
-                ${actionHTML}
+    const renderGroup = (title, icon, items, emptyMessage) => `
+        <section class="staff-work-group">
+            <div class="staff-work-group-heading">
+                <h4><i class="fa-solid ${icon}"></i> ${title}</h4>
+                <span class="staff-work-count">${items.length}</span>
             </div>
-        `;
-    }).join('');
+            ${items.length
+                ? `<div class="pipeline-cards-grid">${items.map(item => renderStaffWorkCard(item.event, profile, item.application)).join('')}</div>`
+                : `<div class="empty-notifications">${emptyMessage}</div>`}
+        </section>
+    `;
+
+    container.innerHTML = [
+        renderGroup('Available to Apply', 'fa-hand', availableWork, 'No new work is waiting for your application.'),
+        renderGroup('Applied / Approval Status', 'fa-clipboard-check', appliedWork, 'You have not applied for any upcoming work yet.')
+    ].join('');
 }
 
-function applyForEventWork(eventId) {
-    const nameInput = document.getElementById(`apply-name-${eventId}`);
-    const phoneInput = document.getElementById(`apply-phone-${eventId}`);
-    const staffName = nameInput ? nameInput.value.trim() : '';
-    const phone = phoneInput ? phoneInput.value.trim() : '';
-
-    if (!staffName) {
-        showToast('Please enter your name first.');
+async function applyForEventWork(eventId) {
+    const profile = getCurrentStaffProfile();
+    if (!profile) {
+        showToast('Please create your profile first.');
         return;
     }
+    const staffName = profile.name;
+    const phone = profile.phone || '';
 
     // Remember who's applying BEFORE the early-return checks below, so
     // re-opening the app (which can wipe this) or clicking Apply again on an
@@ -1079,24 +2040,34 @@ function applyForEventWork(eventId) {
     // application and shows its real status instead of a blank form.
     localStorage.setItem('dd_staff_applicant_name', staffName);
 
-    const alreadyApplied = appState.staffApplications.find(a => a.eventId === eventId && a.staffName.toLowerCase() === staffName.toLowerCase());
+    const event = appState.events.find(evt => String(evt.id || '') === String(eventId || ''));
+    const alreadyApplied = event ? getStaffApplicationForEvent(event, profile) : null;
     if (alreadyApplied) {
         showToast('You have already applied for this event.');
         renderAvailableEventsForStaff();
         return;
     }
 
-    appState.staffApplications.push({
+    const newApplication = {
         id: 'app_' + Date.now(),
         eventId,
+        staffId: profile.id,
         staffName,
         phone,
+        department: profile.department || profile.role || '',
         appliedAt: new Date().toISOString(),
         status: 'pending',
         decidedAt: null
-    });
+    };
+    appState.staffApplications.push(newApplication);
 
-    saveState();
+    const saved = await saveState();
+    if (!saved) {
+        appState.staffApplications = appState.staffApplications.filter(application => application.id !== newApplication.id);
+        showToast('Application could not be saved. Please try again.');
+        renderAvailableEventsForStaff();
+        return;
+    }
     showToast('Application submitted! Waiting for admin approval.');
     renderAvailableEventsForStaff();
 
@@ -1155,18 +2126,31 @@ function renderEventApprovals() {
     }).join('');
 }
 
-function decideStaffApplication(appId, decision) {
+async function decideStaffApplication(appId, decision) {
     const application = appState.staffApplications.find(a => a.id === appId);
     if (!application) return;
 
     application.status = decision;
     application.decidedAt = new Date().toISOString();
-    saveState();
+    if (decision === 'approved') ensureApprovedStaffAssignments();
+    const saved = await saveState();
+    if (!saved) {
+        await loadState();
+        showToast('Approval could not be saved. Please try again.');
+        renderEventApprovals();
+        return;
+    }
     showToast(decision === 'approved' ? 'Staff approved for this event.' : 'Staff application rejected.');
     renderEventApprovals();
 
     const evt = appState.events.find(e => e.id === application.eventId);
-    if (evt) notifyStaffOfApprovalDecision(evt, application.staffName, decision);
+    if (evt) notifyStaffOfApprovalDecision(
+        evt,
+        application.staffName,
+        decision,
+        application.staffId || '',
+        application.department || appState.staff.find(member => member.id === application.staffId)?.department || ''
+    );
 }
 
 function filterEventApprovals() {
@@ -1177,6 +2161,260 @@ function filterEventApprovals() {
         const text = row.textContent.toLowerCase();
         row.style.display = text.includes(query) ? '' : 'none';
     });
+}
+
+// ==========================================
+// EVENT-WISE STAFF ATTENDANCE & SALARY LEDGER (ADMIN ONLY)
+// ==========================================
+
+function ensureApprovedStaffAssignments() {
+    if (!Array.isArray(appState.eventStaffAssignments)) appState.eventStaffAssignments = [];
+    (appState.staffApplications || []).filter(application => application.status === 'approved').forEach(application => {
+        const sourceId = String(application.id || '');
+        const alreadyTracked = appState.eventStaffAssignments.some(assignment =>
+            assignment.sourceApplicationId && String(assignment.sourceApplicationId) === sourceId
+        );
+        if (alreadyTracked) return;
+
+        const staff = appState.staff.find(member => String(member.id || '') === String(application.staffId || ''));
+        const createdAt = application.decidedAt || application.appliedAt || new Date().toISOString();
+        appState.eventStaffAssignments.push({
+            id: `esa_${sourceId || Date.now()}`,
+            eventId: application.eventId,
+            staffId: application.staffId || staff?.id || '',
+            staffName: application.staffName || staff?.name || 'Unnamed Staff',
+            phone: application.phone || staff?.phone || '',
+            workType: application.department || staff?.department || staff?.role || 'General Event Work',
+            attendanceStatus: 'expected',
+            salaryTotal: 0,
+            amountPaid: 0,
+            notes: '',
+            sourceApplicationId: sourceId,
+            createdAt,
+            updatedAt: createdAt
+        });
+    });
+}
+
+function populateEventStaffSalarySelectors() {
+    const eventSelect = document.getElementById('salary-event-select');
+    const staffSelect = document.getElementById('salary-staff-select');
+    if (!eventSelect || !staffSelect) return;
+    const selectedEvent = eventSelect.value;
+    const selectedStaff = staffSelect.value;
+    const events = [...appState.events].sort((a, b) => new Date(b.eventDate) - new Date(a.eventDate));
+    eventSelect.innerHTML = '<option value="">-- Select Event --</option>' + events.map(event =>
+        `<option value="${escapeDocumentText(event.id)}">${escapeDocumentText(formatDisplayDate(event.eventDate))} - ${escapeDocumentText(event.clientName)} (${escapeDocumentText(event.serviceType)})</option>`
+    ).join('');
+    staffSelect.innerHTML = '<option value="">-- Select Staff --</option>' + [...appState.staff]
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .map(staff => `<option value="${escapeDocumentText(staff.id)}">${escapeDocumentText(staff.name)} - ${escapeDocumentText(staff.department || staff.role || 'No department')}</option>`)
+        .join('');
+    eventSelect.value = selectedEvent;
+    staffSelect.value = selectedStaff;
+    loadStaffWorkRoleSuggestions();
+}
+
+function loadStaffWorkRoleSuggestions(resetWork = false) {
+    const staffId = document.getElementById('salary-staff-select')?.value;
+    const workInput = document.getElementById('salary-work-type');
+    const datalist = document.getElementById('salary-work-role-options');
+    if (!workInput || !datalist) return;
+    const staff = appState.staff.find(member => String(member.id) === String(staffId));
+    const roles = normalizeStaffWorkRoles(staff?.workRoles);
+    datalist.innerHTML = roles.map(role => `<option value="${escapeDocumentText(role)}"></option>`).join('');
+    if (resetWork) workInput.value = '';
+    if (staff && !workInput.value.trim()) {
+        workInput.value = roles[0] || staff.department || staff.role || '';
+    }
+}
+
+function formatSalaryAmount(value) {
+    return `₹${Math.max(0, Number(value) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+async function addEventStaffAssignment() {
+    const eventId = document.getElementById('salary-event-select').value;
+    const staffId = document.getElementById('salary-staff-select').value;
+    const workType = document.getElementById('salary-work-type').value.trim();
+    const salaryTotal = Math.max(0, Number(document.getElementById('salary-agreed-amount').value) || 0);
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    const staff = appState.staff.find(item => String(item.id) === String(staffId));
+    if (!event || !staff || !workType) {
+        showToast('Please select an event, staff member and work.');
+        return;
+    }
+
+    const duplicate = appState.eventStaffAssignments.some(assignment =>
+        String(assignment.eventId) === String(eventId) &&
+        String(assignment.staffId) === String(staffId) &&
+        String(assignment.workType || '').trim().toLowerCase() === workType.toLowerCase()
+    );
+    if (duplicate) {
+        showToast('This staff member is already added for the same event and work.');
+        return;
+    }
+
+    const now = new Date().toISOString();
+    const assignment = {
+        id: `esa_manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        eventId,
+        staffId,
+        staffName: staff.name,
+        phone: staff.phone || '',
+        workType,
+        attendanceStatus: 'expected',
+        salaryTotal,
+        amountPaid: 0,
+        notes: '',
+        sourceApplicationId: '',
+        createdAt: now,
+        updatedAt: now
+    };
+    appState.eventStaffAssignments.push(assignment);
+    const saved = await saveState();
+    if (!saved) {
+        appState.eventStaffAssignments = appState.eventStaffAssignments.filter(item => item.id !== assignment.id);
+        showToast('Could not add staff to this event. Please try again.');
+        return;
+    }
+    document.getElementById('event-staff-assignment-form').reset();
+    showToast(`${staff.name} added to ${event.clientName}'s event.`);
+    renderEventStaffSalary();
+}
+
+function renderEventStaffSalary() {
+    const container = document.getElementById('event-staff-salary-groups');
+    if (!container) return;
+    ensureApprovedStaffAssignments();
+    populateEventStaffSalarySelectors();
+
+    const allAssignments = appState.eventStaffAssignments || [];
+    const eventCount = new Set(allAssignments.map(item => String(item.eventId))).size;
+    const attendedCount = allAssignments.filter(item => item.attendanceStatus === 'attended').length;
+    const totalSalary = allAssignments.reduce((sum, item) => sum + Math.max(0, Number(item.salaryTotal) || 0), 0);
+    const totalPaid = allAssignments.reduce((sum, item) => sum + Math.max(0, Number(item.amountPaid) || 0), 0);
+    document.getElementById('salary-stat-events').textContent = eventCount;
+    document.getElementById('salary-stat-attended').textContent = attendedCount;
+    document.getElementById('salary-stat-total').textContent = formatSalaryAmount(totalSalary);
+    document.getElementById('salary-stat-paid').textContent = formatSalaryAmount(totalPaid);
+    document.getElementById('salary-stat-balance').textContent = formatSalaryAmount(Math.max(0, totalSalary - totalPaid));
+
+    const query = (document.getElementById('event-salary-search')?.value || '').trim().toLowerCase();
+    const attendanceFilter = document.getElementById('event-salary-attendance-filter')?.value || 'all';
+    const visibleAssignments = allAssignments.filter(assignment => {
+        const event = appState.events.find(item => String(item.id) === String(assignment.eventId));
+        const haystack = [event?.clientName, event?.eventDate, event?.venue, event?.serviceType, assignment.staffName, assignment.phone, assignment.workType]
+            .filter(Boolean).join(' ').toLowerCase();
+        return (attendanceFilter === 'all' || assignment.attendanceStatus === attendanceFilter) && (!query || haystack.includes(query));
+    });
+
+    if (visibleAssignments.length === 0) {
+        container.innerHTML = '<div class="events-empty-state"><i class="fa-solid fa-people-group"></i><h3>No staff salary records</h3><p>Approve a staff application or add staff to an event above.</p></div>';
+        return;
+    }
+
+    const groups = new Map();
+    visibleAssignments.forEach(assignment => {
+        const key = String(assignment.eventId);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(assignment);
+    });
+    const sortedGroups = [...groups.entries()].sort(([firstId], [secondId]) => {
+        const first = appState.events.find(event => String(event.id) === firstId);
+        const second = appState.events.find(event => String(event.id) === secondId);
+        return new Date(second?.eventDate || 0) - new Date(first?.eventDate || 0);
+    });
+
+    container.innerHTML = sortedGroups.map(([eventId, assignments], groupIndex) => {
+        const event = appState.events.find(item => String(item.id) === String(eventId));
+        const eventSalary = assignments.reduce((sum, item) => sum + Math.max(0, Number(item.salaryTotal) || 0), 0);
+        const eventPaid = assignments.reduce((sum, item) => sum + Math.max(0, Number(item.amountPaid) || 0), 0);
+        return `<section class="event-salary-group">
+            <header class="event-salary-heading">
+                <div class="event-salary-title">
+                    <span class="event-salary-date"><i class="fa-regular fa-calendar"></i> ${event ? escapeDocumentText(formatDisplayDate(event.eventDate)) : 'Event deleted'}</span>
+                    <h3>${escapeDocumentText(event?.clientName || 'Deleted Event')}</h3>
+                    <p>${escapeDocumentText(event?.serviceType || '-')} · ${escapeDocumentText(event?.venue || 'Venue not added')}</p>
+                </div>
+                <div class="event-salary-totals">
+                    <span><small>Salary</small><strong>${formatSalaryAmount(eventSalary)}</strong></span>
+                    <span><small>Paid</small><strong class="paid">${formatSalaryAmount(eventPaid)}</strong></span>
+                    <span><small>Due</small><strong class="due">${formatSalaryAmount(Math.max(0, eventSalary - eventPaid))}</strong></span>
+                </div>
+            </header>
+            <div class="event-salary-staff-list">
+                ${assignments.map((assignment, index) => renderEventSalaryStaffRow(assignment, `${groupIndex}-${index}`)).join('')}
+            </div>
+        </section>`;
+    }).join('');
+}
+
+function renderEventSalaryStaffRow(assignment, rowKey) {
+    const staff = appState.staff.find(member => String(member.id) === String(assignment.staffId));
+    const photo = getSafeStaffPhoto(staff?.photoData);
+    const salaryTotal = Math.max(0, Number(assignment.salaryTotal) || 0);
+    const amountPaid = Math.max(0, Number(assignment.amountPaid) || 0);
+    const balance = Math.max(0, salaryTotal - amountPaid);
+    const statusLabels = { expected: 'Not marked yet', attended: 'Came to work', absent: 'Did not come' };
+    const rowId = `salary-assignment-${rowKey}`;
+    return `<article class="salary-staff-row attendance-${escapeDocumentText(assignment.attendanceStatus || 'expected')}" id="${rowId}">
+        <div class="salary-staff-person">
+            <div class="salary-staff-avatar">${photo ? `<img src="${photo}" alt="${escapeDocumentText(assignment.staffName)}">` : '<i class="fa-solid fa-user"></i>'}</div>
+            <div><h4>${escapeDocumentText(assignment.staffName || 'Unnamed Staff')}</h4><span>${escapeDocumentText(assignment.phone || 'No phone')}</span></div>
+        </div>
+        <div class="salary-row-fields">
+            <label><span>Work</span><input class="salary-work-input" type="text" value="${escapeDocumentText(assignment.workType || '')}"></label>
+            <label><span>Attendance</span><select class="salary-attendance-input">
+                ${Object.entries(statusLabels).map(([value, label]) => `<option value="${value}" ${assignment.attendanceStatus === value ? 'selected' : ''}>${label}</option>`).join('')}
+            </select></label>
+            <label><span>Agreed Salary (₹)</span><input class="salary-total-input" type="number" min="0" step="1" value="${salaryTotal}" oninput="updateSalaryRowBalance('${rowId}')"></label>
+            <label><span>Amount Paid (₹)</span><input class="salary-paid-input" type="number" min="0" step="1" value="${amountPaid}" oninput="updateSalaryRowBalance('${rowId}')"></label>
+            <div class="salary-balance-field"><span>Balance Due</span><strong class="salary-row-balance ${balance > 0 ? 'has-due' : ''}">${formatSalaryAmount(balance)}</strong></div>
+        </div>
+        <div class="salary-row-footer">
+            <label><span>Admin Notes</span><input class="salary-notes-input" type="text" value="${escapeDocumentText(assignment.notes || '')}" placeholder="Payment or attendance note"></label>
+            <button class="btn primary-btn" onclick="saveEventStaffAssignment('${escapeDocumentText(assignment.id)}', '${rowId}')"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+        </div>
+    </article>`;
+}
+
+function updateSalaryRowBalance(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const salaryTotal = Math.max(0, Number(row.querySelector('.salary-total-input').value) || 0);
+    const amountPaid = Math.max(0, Number(row.querySelector('.salary-paid-input').value) || 0);
+    const balance = Math.max(0, salaryTotal - amountPaid);
+    const balanceElement = row.querySelector('.salary-row-balance');
+    balanceElement.textContent = formatSalaryAmount(balance);
+    balanceElement.classList.toggle('has-due', balance > 0);
+}
+
+async function saveEventStaffAssignment(assignmentId, rowId) {
+    const assignment = appState.eventStaffAssignments.find(item => String(item.id) === String(assignmentId));
+    const row = document.getElementById(rowId);
+    if (!assignment || !row) return;
+    const salaryTotal = Math.max(0, Number(row.querySelector('.salary-total-input').value) || 0);
+    const amountPaid = Math.max(0, Number(row.querySelector('.salary-paid-input').value) || 0);
+    if (amountPaid > salaryTotal) {
+        showToast('Amount paid cannot be more than the agreed salary.');
+        return;
+    }
+    assignment.workType = row.querySelector('.salary-work-input').value.trim() || assignment.workType;
+    assignment.attendanceStatus = row.querySelector('.salary-attendance-input').value;
+    assignment.salaryTotal = salaryTotal;
+    assignment.amountPaid = amountPaid;
+    assignment.notes = row.querySelector('.salary-notes-input').value.trim();
+    assignment.updatedAt = new Date().toISOString();
+    const saved = await saveState();
+    if (!saved) {
+        await loadState();
+        showToast('Salary details could not be saved. Please try again.');
+        renderEventStaffSalary();
+        return;
+    }
+    showToast('Staff attendance and salary saved.');
+    renderEventStaffSalary();
 }
 
 // ==========================================
@@ -1321,6 +2559,9 @@ function refreshAllViews() {
     loadWebhookSettingsInForm();
     checkUpcomingEventNotifications();
     refreshActivePipelineStage();
+    if (document.getElementById('tab-event-staff-salary')?.classList.contains('active')) {
+        renderEventStaffSalary();
+    }
 }
 
 // Re-renders whichever pipeline stage page is currently open, so data
@@ -1370,13 +2611,17 @@ function switchTab(tabId) {
 
     let formattedTitle = tabId.charAt(0).toUpperCase() + tabId.slice(1);
     if (tabId === 'billing') {
-        formattedTitle = 'Billing & Invoices';
+        formattedTitle = 'Event Billing & Invoices';
+    } else if (tabId === 'sales-billing') {
+        formattedTitle = 'Sales Billing';
     } else if (tabId === 'quotation') {
         formattedTitle = 'Quotations';
     } else if (tabId === 'worklogs') {
         formattedTitle = 'Staff Work Logs';
     } else if (tabId === 'event-approvals') {
         formattedTitle = 'Event Staff Approvals';
+    } else if (tabId === 'event-staff-salary') {
+        formattedTitle = 'Event Staff & Salary';
     } else if (tabId === 'lead-bowls') {
         formattedTitle = 'Lead Bowls';
     } else if (stageTitles[tabId]) {
@@ -1394,12 +2639,16 @@ function switchTab(tabId) {
         loadQuotationTab();
     } else if (tabId === 'billing') {
         loadBillingTab();
+    } else if (tabId === 'sales-billing') {
+        loadSalesBillingTab();
     } else if (tabId === 'staff') {
         renderStaffTab();
     } else if (tabId === 'worklogs') {
         renderAdminWorkLogs();
     } else if (tabId === 'event-approvals') {
         renderEventApprovals();
+    } else if (tabId === 'event-staff-salary') {
+        renderEventStaffSalary();
     } else if (tabId === 'lead-bowls') {
         renderLeadBowls();
     } else if (tabId === 'customers') {
@@ -1524,12 +2773,30 @@ function openEditEventModal(eventId) {
     openModal('add-event-modal');
 }
 
-function deleteEvent(eventId) {
+async function deleteEvent(eventId) {
     if (confirm('Are you sure you want to delete this event/inquiry? All associated billing logs will be lost permanently.')) {
+        const event = appState.events.find(item => String(item.id) === String(eventId));
+        const previousEvents = cloneDocumentData(appState.events);
+        const storedPaths = (event?.documents || []).map(record => record.path).filter(Boolean);
         appState.events = appState.events.filter(e => e.id !== eventId);
         if (currentQuotationEventId === eventId) currentQuotationEventId = null;
         if (currentInvoiceEventId === eventId) currentInvoiceEventId = null;
-        saveState();
+        const saved = await saveState();
+        if (!saved) {
+            appState.events = previousEvents;
+            showToast('Event could not be deleted. Please try again.');
+            refreshAllViews();
+            return;
+        }
+        if (storedPaths.length) {
+            const { error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).remove(storedPaths);
+            if (error) console.error('Deleted event file cleanup failed', error);
+        }
+        if (currentAdminEmail) {
+            const { error: financeDeleteError } = await sb.from('event_finance_entries').delete().eq('event_id', String(eventId));
+            if (financeDeleteError) console.error('Deleted event finance cleanup failed', financeDeleteError);
+            adminFinanceEntries = adminFinanceEntries.filter(entry => String(entry.eventId) !== String(eventId));
+        }
         showToast('Event deleted successfully.');
         refreshAllViews();
     }
@@ -1538,7 +2805,7 @@ function deleteEvent(eventId) {
 function toggleEventCompletion(eventId) {
     const event = appState.events.find(e => e.id === eventId);
     if (!event) return;
-    
+
     event.heldCompleted = !event.heldCompleted;
     saveState();
     showToast(event.heldCompleted ? 'Event marked as HELD/COMPLETED.' : 'Event marked as ACTIVE/INCOMPLETE.');
@@ -1546,67 +2813,873 @@ function toggleEventCompletion(eventId) {
 }
 
 function renderEventsList() {
-    const tbody = document.getElementById('events-list-tbody');
-    tbody.innerHTML = '';
+    const container = document.getElementById('events-grouped-list');
+    const filters = document.getElementById('event-stage-filters');
+    if (!container || !filters) return;
 
-    if (appState.events.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No events or inquiries registered yet. Click "New Event" to start!</td></tr>';
+    const query = (document.getElementById('event-search')?.value || '').trim().toLowerCase();
+    const stageFilters = [{ key: 'all', label: 'All Events', icon: 'fa-layer-group' }, ...STAGE_DEFS.map(stage => ({
+        ...stage,
+        label: stage.key === 'advance-paid' ? 'Confirmed / Booked' : stage.label
+    }))];
+
+    filters.innerHTML = stageFilters.map(stage => {
+        const count = stage.key === 'all' ? appState.events.length : appState.events.filter(evt => evt.status === stage.key).length;
+        return `<button class="event-stage-filter stage-tone-${stage.key} ${currentEventStageFilter === stage.key ? 'active' : ''}"
+                    onclick="setEventStageFilter('${stage.key}')" aria-pressed="${currentEventStageFilter === stage.key}">
+                    <span class="stage-filter-label"><i class="fa-solid ${stage.icon || getStageIcon(stage.key)}"></i> ${escapeDocumentText(stage.label)}</span>
+                    <strong>${count}</strong>
+                </button>`;
+    }).join('');
+
+    const visibleEvents = appState.events.filter(evt => {
+        const matchesStage = currentEventStageFilter === 'all' || evt.status === currentEventStageFilter;
+        const searchText = [evt.clientName, evt.clientPhone, evt.serviceType, evt.venue, evt.eventDate, evt.createdDate]
+            .filter(Boolean).join(' ').toLowerCase();
+        return matchesStage && (!query || searchText.includes(query));
+    });
+
+    if (visibleEvents.length === 0) {
+        container.innerHTML = '<div class="events-empty-state"><i class="fa-regular fa-calendar-xmark"></i><h3>No matching events</h3><p>Try another stage or search word.</p></div>';
         return;
     }
 
-    const sortedEvents = [...appState.events].sort((a, b) => new Date(a.eventDate) - new Date(b.eventDate));
-
-    sortedEvents.forEach(evt => {
-        const tr = document.createElement('tr');
-        const calculations = getEventInvoiceCalculations(evt);
-        
-        const statusBadgeClass = `badge-${evt.status}`;
-        const displayStatus = getStageLabel(evt.status);
-
-        tr.innerHTML = `
-            <td><strong>${formatDisplayDate(evt.eventDate)}</strong></td>
-            <td>
-                <strong>${evt.clientName}</strong><br>
-                <small class="text-muted">${evt.clientPhone}</small>
-            </td>
-            <td>${evt.serviceType}</td>
-            <td>₹${calculations.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-            <td><span class="badge ${statusBadgeClass}">${displayStatus}</span></td>
-            <td>
-                ${evt.delivered
-                    ? '<span class="text-green" style="font-size:0.85rem;"><i class="fa-solid fa-circle-check"></i> Delivered</span>'
-                    : `<button class="btn text-btn" style="font-size:0.8rem; padding:4px 8px;" onclick="advanceEventStage('${evt.id}')">
-                        <i class="fa-solid fa-check"></i> Approve &rarr; ${getStageLabel(STAGE_DEFS[getStageIndex(evt.status) + 1].key)}
-                       </button>`}
-            </td>
-            <td>
-                <div style="display:flex; gap:5px;">
-                    <button class="action-icon-btn" onclick="openEditEventModal('${evt.id}')" title="Edit details"><i class="fa-solid fa-pen-to-square"></i></button>
-                    <button class="action-icon-btn" onclick="startQuotationForEvent('${evt.id}')" title="Manage Quotation"><i class="fa-solid fa-file-signature text-quotation"></i></button>
-                    <button class="action-icon-btn" onclick="startBillingForEvent('${evt.id}')" title="Manage Billing"><i class="fa-solid fa-file-invoice-dollar text-billing"></i></button>
-                    <button class="action-icon-btn" onclick="toggleEventCompletion('${evt.id}')" title="${evt.heldCompleted ? 'Mark Active' : 'Mark Event Held/Completed'}">
-                        <i class="fa-solid ${evt.heldCompleted ? 'fa-calendar-check text-green' : 'fa-calendar-minus'}"></i>
-                    </button>
-                    <button class="action-icon-btn danger" onclick="deleteEvent('${evt.id}')" title="Delete"><i class="fa-solid fa-trash"></i></button>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
+    const dateFor = evt => currentEventDateView === 'received' ? (evt.createdDate || evt.eventDate) : evt.eventDate;
+    visibleEvents.sort((a, b) => {
+        const dateDiff = new Date(dateFor(a)) - new Date(dateFor(b));
+        return dateDiff || String(a.clientName).localeCompare(String(b.clientName));
     });
+
+    const groups = new Map();
+    visibleEvents.forEach(evt => {
+        const dateKey = dateFor(evt) || 'Date not set';
+        if (!groups.has(dateKey)) groups.set(dateKey, []);
+        groups.get(dateKey).push(evt);
+    });
+
+    container.innerHTML = [...groups.entries()].map(([date, events]) => `
+        <section class="event-date-group">
+            <header class="event-date-heading">
+                <div><i class="fa-regular fa-calendar"></i><strong>${date === 'Date not set' ? date : formatDisplayDate(date)}</strong></div>
+                <span>${events.length} ${events.length === 1 ? 'record' : 'records'}</span>
+            </header>
+            <div class="event-card-list">${events.map(renderEventSummaryCard).join('')}</div>
+        </section>`).join('');
 }
 
 function filterEvents() {
-    const query = document.getElementById('event-search').value.toLowerCase();
-    const rows = document.querySelectorAll('#events-list-tbody tr');
+    renderEventsList();
+}
 
-    rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        if (text.includes(query)) {
-            row.style.display = '';
-        } else {
-            row.style.display = 'none';
+function getStageIcon(stageKey) {
+    const icons = {
+        enquiry: 'fa-comments', quotation: 'fa-file-signature', 'advance-paid': 'fa-calendar-check',
+        'event-completed': 'fa-flag-checkered', 'pending-bill': 'fa-hourglass-half',
+        'completed-bill': 'fa-circle-check', delivered: 'fa-box-open'
+    };
+    return icons[stageKey] || 'fa-circle';
+}
+
+function setEventStageFilter(stageKey) {
+    currentEventStageFilter = stageKey;
+    renderEventsList();
+}
+
+function setEventDateView(view) {
+    currentEventDateView = view;
+    document.querySelectorAll('.date-view-btn').forEach(button => button.classList.toggle('active', button.dataset.dateView === view));
+    renderEventsList();
+}
+
+function renderEventSummaryCard(evt) {
+    const calculations = getEventInvoiceCalculations(evt);
+    const nextStage = STAGE_DEFS[getStageIndex(evt.status) + 1];
+    const amount = calculations.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const receivedDate = evt.createdDate ? formatDisplayDate(evt.createdDate) : 'Not recorded';
+    const documentCount = Array.isArray(evt.documents) ? evt.documents.length : 0;
+    const financeCount = getEventFinanceEntries(evt.id).length;
+    const isBookedEvent = getStageIndex(evt.status) >= getStageIndex('advance-paid');
+
+    return `<article class="event-summary-card stage-card-${evt.status}">
+        <div class="event-card-main">
+            <div class="event-customer">
+                <span class="badge badge-${evt.status}">${escapeDocumentText(getStageLabel(evt.status))}</span>
+                <h3>${escapeDocumentText(evt.clientName || 'Unnamed customer')}</h3>
+                <a href="tel:${escapeDocumentText(evt.clientPhone || '')}"><i class="fa-solid fa-phone"></i> ${escapeDocumentText(evt.clientPhone || 'No phone')}</a>
+            </div>
+            <div class="event-card-detail"><span>Service / Venue</span><strong>${escapeDocumentText(evt.serviceType || 'Not specified')}</strong><small>${escapeDocumentText(evt.venue || 'Venue not added')}</small></div>
+            <div class="event-card-detail"><span>Event date</span><strong>${escapeDocumentText(formatDisplayDate(evt.eventDate))}</strong></div>
+            <div class="event-card-detail"><span>Enquiry received</span><strong>${escapeDocumentText(receivedDate)}</strong></div>
+            <div class="event-card-amount"><span>Total</span><strong>₹${amount}</strong></div>
+        </div>
+        <div class="event-card-footer">
+            <div class="event-primary-actions">
+                <button class="event-action-btn" onclick="openEditEventModal('${evt.id}')"><i class="fa-solid fa-pen"></i> Edit</button>
+                <button class="event-action-btn quotation-action" onclick="startQuotationForEvent('${evt.id}')"><i class="fa-solid fa-file-signature"></i> Open quotation</button>
+                <button class="event-action-btn" onclick="startBillingForEvent('${evt.id}')"><i class="fa-solid fa-file-invoice-dollar"></i> Billing</button>
+                ${isBookedEvent ? `<button class="event-action-btn event-documents-action" onclick="openEventDocuments('${evt.id}')"><i class="fa-solid fa-folder-open"></i> Documents${documentCount ? ` (${documentCount})` : ''}</button>` : ''}
+                ${isBookedEvent && currentAdminEmail ? `<button class="event-action-btn event-expenses-action" onclick="openEventExpenses('${evt.id}')"><i class="fa-solid fa-lock"></i> Expenses${financeCount ? ` (${financeCount})` : ''}</button>` : ''}
+            </div>
+            <div class="event-progress-action">
+                ${evt.delivered || !nextStage
+                    ? '<span class="event-delivered"><i class="fa-solid fa-circle-check"></i> Delivered</span>'
+                    : `<button class="btn event-approve-btn" onclick="advanceEventStage('${evt.id}')"><i class="fa-solid fa-check"></i> Move to ${escapeDocumentText(nextStage.label)}</button>`}
+                <button class="action-icon-btn danger" onclick="deleteEvent('${evt.id}')" title="Delete event" aria-label="Delete event"><i class="fa-solid fa-trash"></i></button>
+            </div>
+        </div>
+    </article>`;
+}
+
+// ==========================================
+// 4A. BOOKED EVENT DOCUMENTS & PDF REPORT
+// ==========================================
+
+function getCurrentEventDocumentsEvent() {
+    return appState.events.find(event => String(event.id) === String(currentEventDocumentsEventId));
+}
+
+function createStableEventDocumentServiceId(description, index) {
+    const signature = `${index}|${String(description || '').trim().toLowerCase()}`;
+    let hash = 2166136261;
+    for (let position = 0; position < signature.length; position += 1) {
+        hash ^= signature.charCodeAt(position);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `service_${index}_${(hash >>> 0).toString(36)}`;
+}
+
+function getEventDocumentServiceItems(event) {
+    const quotation = getQuotationDocument(event);
+    let items = quotation.items || [];
+    if (!items.length && event.serviceType) {
+        quotation.items = [{ desc: event.serviceType, rate: 0, qty: 1, subItems: [] }];
+        items = quotation.items;
+    }
+    return items.map((item, index) => {
+        const description = item.desc || event.serviceType || `Event Service ${index + 1}`;
+        if (!item.documentServiceId) {
+            // A deterministic ID survives dashboard auto-sync even before the
+            // first upload/save persists it to Supabase.
+            item.documentServiceId = createStableEventDocumentServiceId(description, index);
         }
+        const rate = Number(item.rate) || 0;
+        const qty = Math.max(1, Number(item.qty) || 1);
+        return {
+            key: item.documentServiceId,
+            description,
+            subItems: Array.isArray(item.subItems) ? item.subItems.map(getSubItemDescription).filter(Boolean) : [],
+            rate,
+            qty,
+            total: getDocumentItemTotal(item)
+        };
     });
+}
+
+function getCurrentEventDocumentService(event = getCurrentEventDocumentsEvent()) {
+    if (!event) return null;
+    const services = getEventDocumentServiceItems(event);
+    let service = currentEventDocumentServiceKey
+        ? services.find(item => item.key === currentEventDocumentServiceKey) || null
+        : null;
+
+    // If an auto-sync replaced an older unsaved random ID, keep the visibly
+    // selected dropdown service by its stable quotation position.
+    if (!service) {
+        const selector = document.getElementById('event-document-service-select');
+        const selectedOption = selector?.selectedOptions?.[0];
+        const serviceIndex = Number(selectedOption?.dataset?.serviceIndex);
+        if (Number.isInteger(serviceIndex) && serviceIndex >= 0) {
+            service = services[serviceIndex] || null;
+            if (service) {
+                currentEventDocumentServiceKey = service.key;
+                selectedOption.value = service.key;
+                selector.value = service.key;
+            }
+        }
+    }
+    return service;
+}
+
+function getSelectedEventDocumentRecords(event = getCurrentEventDocumentsEvent()) {
+    const service = getCurrentEventDocumentService(event);
+    if (!event || !service) return [];
+    const services = getEventDocumentServiceItems(event);
+    const selectedServiceName = String(service.description || '').trim().toLowerCase();
+    return (event.documents || []).filter(record => {
+        if (record.serviceKey === service.key) return true;
+        // Older uploads may carry a previous service ID after quotation sync,
+        // but their saved service name still identifies the correct service.
+        if (record.serviceName && String(record.serviceName).trim().toLowerCase() === selectedServiceName) return true;
+        if (record.serviceKey) return false;
+        // Preserve access to uploads created before service-wise documents when
+        // the quotation contains only one service. Multi-service legacy files
+        // stay untouched instead of being assigned to the wrong service.
+        return services.length === 1;
+    });
+}
+
+function getEventDocumentServiceNotes(event, service) {
+    if (!event || !service) return '';
+    const savedNotes = event.documentServiceNotes?.[service.key];
+    if (typeof savedNotes === 'string') return savedNotes;
+    return getEventDocumentServiceItems(event).length === 1 ? (event.documentNotes || '') : '';
+}
+
+async function openEventDocuments(eventId) {
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    if (!event) return;
+    if (getStageIndex(event.status) < getStageIndex('advance-paid')) {
+        showToast('Event documents are available after the event is confirmed/booked.');
+        return;
+    }
+
+    currentEventDocumentsEventId = event.id;
+    currentEventDocumentServiceKey = '';
+    if (!Array.isArray(event.documents)) event.documents = [];
+    if (!event.documentServiceNotes || typeof event.documentServiceNotes !== 'object' || Array.isArray(event.documentServiceNotes)) event.documentServiceNotes = {};
+    document.getElementById('event-documents-event-id').value = event.id;
+    document.getElementById('event-document-files').value = '';
+    document.getElementById('event-document-upload-status').classList.add('hidden');
+    const services = getEventDocumentServiceItems(event);
+    const selector = document.getElementById('event-document-service-select');
+    selector.innerHTML = '<option value="">-- Choose a quotation service --</option>' + services.map((service, index) =>
+        `<option value="${escapeDocumentText(service.key)}" data-service-index="${index}">${escapeDocumentText(service.description)}</option>`
+    ).join('');
+    if (services.length === 1) {
+        currentEventDocumentServiceKey = services[0].key;
+        selector.value = services[0].key;
+    }
+    openModal('event-documents-modal');
+    await changeEventDocumentService();
+}
+
+async function changeEventDocumentService() {
+    const event = getCurrentEventDocumentsEvent();
+    const selector = document.getElementById('event-document-service-select');
+    if (!event || !selector) return;
+    currentEventDocumentServiceKey = selector.value;
+    const service = getCurrentEventDocumentService(event);
+    document.getElementById('event-document-notes').value = getEventDocumentServiceNotes(event, service);
+    document.getElementById('event-document-files').value = '';
+    document.getElementById('event-document-upload-status').classList.add('hidden');
+    document.getElementById('event-documents-summary').innerHTML = renderEventDocumentsSummary(event, service);
+    await renderEventDocumentList(event);
+}
+
+function renderEventDocumentsSummary(event, service) {
+    if (!service) {
+        return '<div class="event-document-empty"><i class="fa-solid fa-hand-pointer"></i><p>Select one quotation service above. Only that service details, notes and images will be used.</p></div>';
+    }
+    return `<div class="event-document-summary-title">
+            <div><span>Event Date</span><strong>${escapeDocumentText(formatDisplayDate(event.eventDate))}</strong></div>
+            <div><span>Customer</span><strong>${escapeDocumentText(event.clientName || 'Not added')}</strong></div>
+            <div><span>Venue</span><strong>${escapeDocumentText(event.venue || 'Not added')}</strong></div>
+            <div><span>Work Items</span><strong>${service.subItems.length}</strong></div>
+        </div>
+        <div class="event-document-service-summary"><span>Selected Quotation Service</span><div>
+            <strong>${escapeDocumentText(service.description)}${service.subItems.length ? `<small>${service.subItems.map(escapeDocumentText).join(' · ')}</small>` : '<small>No sub-service details added.</small>'}</strong>
+        </div></div>`;
+}
+
+function setEventDocumentUploadStatus(message, isError = false) {
+    const status = document.getElementById('event-document-upload-status');
+    status.textContent = message;
+    status.classList.remove('hidden', 'error');
+    if (isError) status.classList.add('error');
+}
+
+function readBlobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('File could not be read.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function loadImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Image could not be opened.'));
+        image.src = dataUrl;
+    });
+}
+
+async function prepareEventDocumentImage(file) {
+    const source = await readBlobAsDataUrl(file);
+    const image = await loadImageFromDataUrl(source);
+    const maxSide = 1600;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('Image compression failed.');
+    const baseName = String(file.name || 'event-image').replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+}
+
+function safeEventDocumentFileName(name) {
+    const cleaned = String(name || 'file').normalize('NFKD').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-');
+    return cleaned.replace(/^[-.]+|[-.]+$/g, '').slice(-100) || 'file';
+}
+
+async function uploadEventDocuments() {
+    const event = getCurrentEventDocumentsEvent();
+    const service = getCurrentEventDocumentService(event);
+    const input = document.getElementById('event-document-files');
+    const files = [...(input.files || [])];
+    if (!event || !service) {
+        showToast('Choose a quotation service first.');
+        return;
+    }
+    if (files.length === 0) {
+        showToast('Choose one or more images/PDF files first.');
+        return;
+    }
+    if (getSelectedEventDocumentRecords(event).length + files.length > 12) {
+        showToast('Maximum 12 uploaded files are allowed for one service.');
+        return;
+    }
+
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+    const uploadButton = document.getElementById('event-document-upload-btn');
+    uploadButton.disabled = true;
+    const uploadedRecords = [];
+    const problems = [];
+
+    try {
+        for (let index = 0; index < files.length; index += 1) {
+            const originalFile = files[index];
+            setEventDocumentUploadStatus(`Uploading ${index + 1} of ${files.length}: ${originalFile.name}`);
+            if (!allowedTypes.has(originalFile.type)) {
+                problems.push(`${originalFile.name}: unsupported file type`);
+                continue;
+            }
+            if (originalFile.size > 10 * 1024 * 1024) {
+                problems.push(`${originalFile.name}: file is larger than 10 MB`);
+                continue;
+            }
+
+            const preparedFile = originalFile.type.startsWith('image/')
+                ? await prepareEventDocumentImage(originalFile)
+                : originalFile;
+            if (preparedFile.size > 5 * 1024 * 1024) {
+                problems.push(`${originalFile.name}: compressed file is still larger than 5 MB`);
+                continue;
+            }
+
+            const documentId = `edoc_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 7)}`;
+            const storagePath = `${event.id}/${safeEventDocumentFileName(service.key)}/${documentId}-${safeEventDocumentFileName(preparedFile.name)}`;
+            const { error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).upload(storagePath, preparedFile, {
+                contentType: preparedFile.type,
+                upsert: false
+            });
+            if (error) {
+                console.error('Event document upload failed', error);
+                problems.push(`${originalFile.name}: upload failed`);
+                continue;
+            }
+            uploadedRecords.push({
+                id: documentId,
+                name: originalFile.name,
+                path: storagePath,
+                type: preparedFile.type,
+                size: preparedFile.size,
+                serviceKey: service.key,
+                serviceName: service.description,
+                uploadedAt: new Date().toISOString()
+            });
+        }
+
+        if (uploadedRecords.length) {
+            event.documents = [...(event.documents || []), ...uploadedRecords];
+            event.documentsUpdatedAt = new Date().toISOString();
+            const saved = await saveState();
+            if (!saved) {
+                event.documents = (event.documents || []).filter(record => !uploadedRecords.some(uploaded => uploaded.id === record.id));
+                await sb.storage.from(EVENT_DOCUMENTS_BUCKET).remove(uploadedRecords.map(record => record.path));
+                throw new Error('Uploaded file details could not be saved.');
+            }
+        }
+
+        input.value = '';
+        setEventDocumentUploadStatus(
+            `${uploadedRecords.length} file${uploadedRecords.length === 1 ? '' : 's'} uploaded.${problems.length ? ` ${problems.length} file(s) skipped.` : ''}`,
+            uploadedRecords.length === 0
+        );
+        if (problems.length) console.warn('Skipped event documents:', problems);
+        await renderEventDocumentList(event);
+        renderEventsList();
+    } catch (error) {
+        console.error('Event documents upload error', error);
+        setEventDocumentUploadStatus(error.message || 'Files could not be uploaded.', true);
+    } finally {
+        uploadButton.disabled = false;
+    }
+}
+
+async function renderEventDocumentList(event = getCurrentEventDocumentsEvent()) {
+    const container = document.getElementById('event-document-list');
+    const count = document.getElementById('event-document-count');
+    if (!container || !count || !event) return;
+    const service = getCurrentEventDocumentService(event);
+    if (!service) {
+        count.textContent = '0 files';
+        container.innerHTML = '<div class="event-document-empty"><i class="fa-solid fa-hand-pointer"></i><p>Choose a quotation service to view its files.</p></div>';
+        return;
+    }
+    const records = getSelectedEventDocumentRecords(event);
+    count.textContent = `${records.length} ${records.length === 1 ? 'file' : 'files'}`;
+    if (!records.length) {
+        container.innerHTML = `<div class="event-document-empty"><i class="fa-regular fa-folder-open"></i><p>No images or PDFs uploaded for ${escapeDocumentText(service.description)}.</p></div>`;
+        return;
+    }
+
+    container.innerHTML = records.map(record => `<article class="event-document-file-card" id="event-document-card-${record.id}">
+        <div class="event-document-preview loading"><i class="fa-solid fa-spinner fa-spin"></i></div>
+        <div class="event-document-file-info"><strong>${escapeDocumentText(record.name)}</strong><span>${escapeDocumentText(record.type === 'application/pdf' ? 'PDF Document' : 'Event Image')} · ${formatEventDocumentSize(record.size)}</span></div>
+        <div class="event-document-file-actions">
+            <button type="button" onclick="downloadEventDocument('${record.id}')" title="Download file" aria-label="Download ${escapeDocumentText(record.name)}"><i class="fa-solid fa-download"></i><span>Download</span></button>
+            <button type="button" class="danger" onclick="deleteEventDocument('${record.id}')" title="Delete file" aria-label="Delete ${escapeDocumentText(record.name)}"><i class="fa-solid fa-trash"></i><span>Delete</span></button>
+        </div>
+    </article>`).join('');
+
+    await Promise.all(records.map(async record => {
+        const card = document.getElementById(`event-document-card-${record.id}`);
+        if (!card || currentEventDocumentsEventId !== event.id) return;
+        const preview = card.querySelector('.event-document-preview');
+        if (record.type === 'application/pdf') {
+            preview.className = 'event-document-preview pdf';
+            preview.innerHTML = '<i class="fa-solid fa-file-pdf"></i>';
+            return;
+        }
+        const { data, error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).createSignedUrl(record.path, 3600);
+        if (error || !data?.signedUrl) {
+            preview.className = 'event-document-preview error';
+            preview.innerHTML = '<i class="fa-solid fa-image"></i>';
+            return;
+        }
+        preview.className = 'event-document-preview image';
+        preview.innerHTML = `<img src="${escapeDocumentText(data.signedUrl)}" alt="${escapeDocumentText(record.name)}">`;
+    }));
+}
+
+function formatEventDocumentSize(bytes) {
+    const size = Number(bytes) || 0;
+    if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+async function saveEventDocumentNotes(silent = false) {
+    const event = getCurrentEventDocumentsEvent();
+    const service = getCurrentEventDocumentService(event);
+    if (!event || !service) {
+        if (!silent) showToast('Choose a quotation service first.');
+        return false;
+    }
+    const notes = document.getElementById('event-document-notes').value.trim();
+    if (!event.documentServiceNotes || typeof event.documentServiceNotes !== 'object' || Array.isArray(event.documentServiceNotes)) event.documentServiceNotes = {};
+    const previousNotes = event.documentServiceNotes[service.key];
+    if (notes === (previousNotes || '')) return true;
+    event.documentServiceNotes[service.key] = notes;
+    event.documentsUpdatedAt = new Date().toISOString();
+    const saved = await saveState();
+    if (!saved) {
+        if (typeof previousNotes === 'undefined') delete event.documentServiceNotes[service.key];
+        else event.documentServiceNotes[service.key] = previousNotes;
+        if (!silent) showToast('Event notes could not be saved. Please try again.');
+        return false;
+    }
+    if (!silent) showToast(`${service.description} notes saved.`);
+    return true;
+}
+
+async function downloadEventDocument(documentId) {
+    const event = getCurrentEventDocumentsEvent();
+    const record = getSelectedEventDocumentRecords(event).find(item => String(item.id) === String(documentId));
+    if (!record) return;
+    const { data, error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).download(record.path);
+    if (error || !data) {
+        console.error('Event document download failed', error);
+        showToast('File could not be downloaded.');
+        return;
+    }
+    downloadBlob(data, record.name || 'event-file');
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function deleteEventDocument(documentId) {
+    const event = getCurrentEventDocumentsEvent();
+    const service = getCurrentEventDocumentService(event);
+    const record = getSelectedEventDocumentRecords(event).find(item => String(item.id) === String(documentId));
+    if (!event || !service || !record || !confirm(`Delete "${record.name}" from ${service.description}? This file cannot be recovered.`)) return;
+    const previousDocuments = cloneDocumentData(event.documents || []);
+    event.documents = previousDocuments.filter(item => String(item.id) !== String(documentId));
+    event.documentsUpdatedAt = new Date().toISOString();
+    const saved = await saveState();
+    if (!saved) {
+        event.documents = previousDocuments;
+        showToast('File details could not be deleted. Please try again.');
+        return;
+    }
+    const { error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).remove([record.path]);
+    if (error) console.error('Stored event file cleanup failed', error);
+    showToast(`${record.name} deleted from ${service.description}.`);
+    await renderEventDocumentList(event);
+    renderEventsList();
+}
+
+async function getEventDocumentImageData(record) {
+    let { data, error } = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).download(record.path);
+    if (error || !data) {
+        const signed = await sb.storage.from(EVENT_DOCUMENTS_BUCKET).createSignedUrl(record.path, 300);
+        if (signed.error || !signed.data?.signedUrl) throw error || signed.error || new Error('Image download failed.');
+        const response = await fetch(signed.data.signedUrl);
+        if (!response.ok) throw new Error(`Image download failed (${response.status}).`);
+        data = await response.blob();
+    }
+    const inferredType = inferEventDocumentImageType(record);
+    const normalizedBlob = data.type?.startsWith('image/') ? data : data.slice(0, data.size, inferredType);
+    return readBlobAsDataUrl(normalizedBlob);
+}
+
+function inferEventDocumentImageType(record) {
+    const name = String(record?.name || record?.path || '').toLowerCase();
+    if (name.endsWith('.png')) return 'image/png';
+    if (name.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
+}
+
+function isEventDocumentImage(record) {
+    const type = String(record?.type || '').toLowerCase();
+    const name = String(record?.name || record?.path || '').toLowerCase();
+    return type.startsWith('image/') || /\.(jpe?g|png|webp)$/.test(name);
+}
+
+function isEventDocumentPdf(record) {
+    const type = String(record?.type || '').toLowerCase();
+    const name = String(record?.name || record?.path || '').toLowerCase();
+    return type === 'application/pdf' || name.endsWith('.pdf');
+}
+
+function eventDocumentReportMarkup(event, service, selectedRecords, imageCount) {
+    const pdfRecords = selectedRecords.filter(isEventDocumentPdf);
+    const serviceNotes = getEventDocumentServiceNotes(event, service);
+    return `<div class="event-pdf-header"><div><span>DD</span><h1>DD Events</h1></div><p>Selected Service Details</p></div>
+        <div class="event-pdf-title"><h2>${escapeDocumentText(service.description)}</h2><strong>${escapeDocumentText(formatDisplayDate(event.eventDate))}</strong></div>
+        <div class="event-pdf-basic-grid">
+            <div><span>Customer</span><strong>${escapeDocumentText(event.clientName || '-')}</strong></div>
+            <div><span>Phone</span><strong>${escapeDocumentText(event.clientPhone || '-')}</strong></div>
+            <div><span>Venue</span><strong>${escapeDocumentText(event.venue || '-')}</strong></div>
+            <div><span>Event Date</span><strong>${escapeDocumentText(formatDisplayDate(event.eventDate))}</strong></div>
+            <div><span>Included Images</span><strong>${imageCount}</strong></div>
+        </div>
+        <section><h3>Selected Service Work Details</h3><div class="event-pdf-services"><div>
+            <strong>${escapeDocumentText(service.description)}</strong>
+            ${service.subItems.length ? `<ul>${service.subItems.map(item => `<li>${escapeDocumentText(item)}</li>`).join('')}</ul>` : '<small>No sub-service details added.</small>'}
+        </div></div></section>
+        <section><h3>${escapeDocumentText(service.description)} Notes</h3><p>${escapeDocumentText(serviceNotes || 'No notes added for this service.').replace(/\n/g, '<br>')}</p></section>
+        ${pdfRecords.length ? `<section><h3>Uploaded PDF Attachments</h3><ul class="event-pdf-attachments">${pdfRecords.map(record => `<li>${escapeDocumentText(record.name)} (${formatEventDocumentSize(record.size)})</li>`).join('')}</ul><small>These attachments can be downloaded individually from the Event Documents panel.</small></section>` : ''}
+        <div class="event-pdf-footer-text">Generated from DD Events Dashboard on ${escapeDocumentText(new Date().toLocaleDateString('en-IN'))}</div>`;
+}
+
+async function addEventDocumentImagePage(pdf, imageRecord, service, pageNumber, totalPages, imageNumber, totalImages) {
+    const image = await loadImageFromDataUrl(imageRecord.dataUrl);
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const sideMargin = 10;
+    const imageTop = 23;
+    const imageBottom = 278;
+    const availableWidth = pageWidth - (sideMargin * 2);
+    const availableHeight = imageBottom - imageTop;
+    const widthScale = availableWidth / image.naturalWidth;
+    const heightScale = availableHeight / image.naturalHeight;
+    const scale = Math.min(widthScale, heightScale);
+    const imageWidth = image.naturalWidth * scale;
+    const imageHeight = image.naturalHeight * scale;
+    const imageX = (pageWidth - imageWidth) / 2;
+    const imageY = imageTop + ((availableHeight - imageHeight) / 2);
+    const imageFormat = String(imageRecord.dataUrl).startsWith('data:image/png') ? 'PNG' : 'JPEG';
+
+    pdf.addPage();
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(90, 24, 154);
+    pdf.text(`${service.description} | Image ${imageNumber} of ${totalImages}`, sideMargin, 13);
+    pdf.setDrawColor(231, 215, 245);
+    pdf.setLineWidth(0.35);
+    pdf.rect(imageX, imageY, imageWidth, imageHeight);
+    pdf.addImage(imageRecord.dataUrl, imageFormat, imageX, imageY, imageWidth, imageHeight, undefined, 'FAST');
+
+    pdf.setFillColor(255, 255, 255);
+    pdf.rect(0, 289, pageWidth, 8, 'F');
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(90, 24, 154);
+    pdf.text(`DD Events | Page ${pageNumber} of ${totalPages}`, pageWidth / 2, 294, { align: 'center' });
+}
+
+async function downloadEventDetailsPdf() {
+    const event = getCurrentEventDocumentsEvent();
+    const service = getCurrentEventDocumentService(event);
+    if (!event || !service) {
+        showToast('Choose a quotation service first.');
+        return;
+    }
+    if (!window.jspdf?.jsPDF || typeof html2canvas !== 'function') {
+        showToast('PDF generator is not available. Check internet and try again.');
+        return;
+    }
+
+    const button = document.getElementById('event-document-pdf-btn');
+    button.disabled = true;
+    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Preparing PDF...';
+    let reportElement;
+    try {
+        const notesSaved = await saveEventDocumentNotes(true);
+        if (!notesSaved) throw new Error('Notes could not be saved before PDF creation.');
+        const selectedRecords = getSelectedEventDocumentRecords(event);
+        const imageFiles = selectedRecords.filter(isEventDocumentImage);
+        const imageRecords = [];
+        const failedImages = [];
+        for (const record of imageFiles) {
+            try {
+                imageRecords.push({ ...record, dataUrl: await getEventDocumentImageData(record) });
+            } catch (error) {
+                console.error('Event image could not be loaded for PDF', record.path, error);
+                failedImages.push(record.name || 'image');
+            }
+        }
+        if (failedImages.length) {
+            throw new Error(`${failedImages.length} uploaded image${failedImages.length === 1 ? '' : 's'} could not be loaded. Please reopen Documents and try again.`);
+        }
+
+        reportElement = document.createElement('div');
+        reportElement.className = 'event-pdf-report';
+        reportElement.innerHTML = eventDocumentReportMarkup(event, service, selectedRecords, imageRecords.length);
+        document.body.appendChild(reportElement);
+        const canvas = await html2canvas(reportElement, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: 794
+        });
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+        const pageWidth = 210;
+        const pageHeight = 297;
+        const margin = 7;
+        const contentWidth = pageWidth - (margin * 2);
+        const contentHeight = pageHeight - 15;
+        const renderedHeight = canvas.height * contentWidth / canvas.width;
+        const imageData = canvas.toDataURL('image/jpeg', 0.9);
+        const detailPageCount = Math.max(1, Math.ceil(renderedHeight / contentHeight));
+        const totalPageCount = detailPageCount + imageRecords.length;
+        for (let page = 0; page < detailPageCount; page += 1) {
+            if (page > 0) pdf.addPage();
+            pdf.addImage(imageData, 'JPEG', margin, margin - (page * contentHeight), contentWidth, renderedHeight, undefined, 'FAST');
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(0, 289, pageWidth, 8, 'F');
+            pdf.setFontSize(8);
+            pdf.setTextColor(90, 24, 154);
+            pdf.text(`DD Events | Page ${page + 1} of ${totalPageCount}`, pageWidth / 2, 294, { align: 'center' });
+        }
+        for (let index = 0; index < imageRecords.length; index += 1) {
+            await addEventDocumentImagePage(
+                pdf,
+                imageRecords[index],
+                service,
+                detailPageCount + index + 1,
+                totalPageCount,
+                index + 1,
+                imageRecords.length
+            );
+        }
+        const safeClientName = safeEventDocumentFileName(event.clientName || 'event');
+        const safeServiceName = safeEventDocumentFileName(service.description || 'service');
+        pdf.save(`DD-Events-${event.eventDate || 'date'}-${safeClientName}-${safeServiceName}.pdf`);
+        showToast(`${service.description} PDF downloaded.`);
+    } catch (error) {
+        console.error('Event PDF generation failed', error);
+        showToast(error.message || 'Event PDF could not be created.');
+    } finally {
+        reportElement?.remove();
+        button.disabled = false;
+        button.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Download Service PDF';
+    }
+}
+
+// ==========================================
+// 4B. ADMIN-ONLY EVENT FINANCE
+// ==========================================
+
+function getCurrentEventFinanceEvent() {
+    return appState.events.find(event => String(event.id) === String(currentEventFinanceEventId));
+}
+
+function formatFinanceAmount(value) {
+    return `₹${(Number(value) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+async function openEventExpenses(eventId) {
+    if (!currentAdminEmail) {
+        showToast('Only an admin can view event expenses.');
+        return;
+    }
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    if (!event) return;
+    if (getStageIndex(event.status) < getStageIndex('advance-paid')) {
+        showToast('Expenses are available after the event is confirmed/booked.');
+        return;
+    }
+
+    currentEventFinanceEventId = event.id;
+    await loadAdminFinanceEntries(true);
+    const services = getEventDocumentServiceItems(event);
+    const selector = document.getElementById('event-finance-service');
+    selector.innerHTML = services.map(service => `<option value="${escapeDocumentText(service.key)}">${escapeDocumentText(service.description)}</option>`).join('');
+    if (!services.length) selector.innerHTML = '<option value="general">General Event Cost</option>';
+    document.getElementById('event-finance-entry-form').reset();
+    selector.value = services[0]?.key || 'general';
+    renderEventFinanceModal();
+    openModal('event-expenses-modal');
+}
+
+function renderEventFinanceModal() {
+    const event = getCurrentEventFinanceEvent();
+    const summary = document.getElementById('event-finance-summary');
+    const list = document.getElementById('event-finance-entry-list');
+    const count = document.getElementById('event-finance-entry-count');
+    if (!event || !summary || !list || !count) return;
+
+    const entries = getEventFinanceEntries(event.id);
+    const totals = getEventFinanceTotals(event);
+    const totalInternalCost = totals.expenses + totals.investments;
+    summary.innerHTML = `
+        <div class="event-finance-event-title"><div><span>Event</span><strong>${escapeDocumentText(event.clientName || 'Unnamed customer')}</strong></div><div><span>Date</span><strong>${escapeDocumentText(formatDisplayDate(event.eventDate))}</strong></div></div>
+        <div class="event-finance-total-grid">
+            <div><span>Client Total</span><strong>${formatFinanceAmount(totals.revenue)}</strong></div>
+            <div class="expense"><span>Expenses</span><strong>${formatFinanceAmount(totals.expenses)}</strong></div>
+            <div class="investment"><span>Investment</span><strong>${formatFinanceAmount(totals.investments)}</strong></div>
+            <div><span>Labor (in expenses)</span><strong>${formatFinanceAmount(totals.labor)}</strong></div>
+            <div><span>Total Internal Cost</span><strong>${formatFinanceAmount(totalInternalCost)}</strong></div>
+            <div class="${totals.profit < 0 ? 'loss' : 'profit'}"><span>${totals.profit < 0 ? 'Loss' : 'Estimated Profit'}</span><strong>${formatFinanceAmount(Math.abs(totals.profit))}</strong></div>
+        </div>`;
+
+    count.textContent = `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`;
+    if (!entries.length) {
+        list.innerHTML = '<div class="event-finance-empty"><i class="fa-solid fa-receipt"></i><p>No internal expenses or investments added for this event.</p></div>';
+        return;
+    }
+
+    const grouped = new Map();
+    entries.forEach(entry => {
+        const groupKey = entry.serviceName || 'General Event Cost';
+        if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+        grouped.get(groupKey).push(entry);
+    });
+    list.innerHTML = [...grouped.entries()].map(([serviceName, serviceEntries]) => {
+        const serviceExpense = serviceEntries.filter(entry => entry.entryType === 'expense').reduce((sum, entry) => sum + entry.amount, 0);
+        const serviceInvestment = serviceEntries.filter(entry => entry.entryType === 'investment').reduce((sum, entry) => sum + entry.amount, 0);
+        return `<section class="event-finance-service-group">
+            <header><div><i class="fa-solid fa-briefcase"></i><strong>${escapeDocumentText(serviceName)}</strong></div><span>E ${formatFinanceAmount(serviceExpense)} · I ${formatFinanceAmount(serviceInvestment)}</span></header>
+            <div>${serviceEntries.map(entry => `<article class="event-finance-entry-row">
+                <div class="event-finance-entry-main"><span class="event-finance-kind ${entry.entryType}">${escapeDocumentText(entry.entryType)}</span><strong>${escapeDocumentText(entry.category)}</strong>${entry.notes ? `<p>${escapeDocumentText(entry.notes)}</p>` : ''}<small>${entry.createdAt ? escapeDocumentText(new Date(entry.createdAt).toLocaleString('en-IN')) : ''}${entry.createdBy ? ` · ${escapeDocumentText(entry.createdBy)}` : ''}</small></div>
+                <strong class="event-finance-entry-amount">${formatFinanceAmount(entry.amount)}</strong>
+                <button type="button" class="event-finance-delete" onclick="deleteEventFinanceEntry('${entry.id}')" title="Delete entry" aria-label="Delete finance entry"><i class="fa-solid fa-trash"></i></button>
+            </article>`).join('')}</div>
+        </section>`;
+    }).join('');
+}
+
+async function addEventFinanceEntry(submitEvent) {
+    submitEvent.preventDefault();
+    if (!currentAdminEmail) {
+        showToast('Only an admin can add event expenses.');
+        return;
+    }
+    const event = getCurrentEventFinanceEvent();
+    if (!event) return;
+    const serviceKey = document.getElementById('event-finance-service').value;
+    const services = getEventDocumentServiceItems(event);
+    const service = services.find(item => item.key === serviceKey);
+    const entryType = document.getElementById('event-finance-type').value;
+    const category = document.getElementById('event-finance-category').value;
+    const amount = Number(document.getElementById('event-finance-amount').value);
+    const notes = document.getElementById('event-finance-notes').value.trim();
+    if (!Number.isFinite(amount) || amount <= 0) {
+        showToast('Enter a valid amount greater than zero.');
+        return;
+    }
+
+    const button = document.getElementById('event-finance-add-btn');
+    button.disabled = true;
+    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+    const payload = {
+        event_id: String(event.id),
+        entry_type: entryType === 'investment' ? 'investment' : 'expense',
+        service_key: service?.key || 'general',
+        service_name: service?.description || 'General Event Cost',
+        category,
+        amount,
+        notes,
+        created_by: currentAdminEmail
+    };
+    try {
+        const { data, error } = await sb.from('event_finance_entries').insert(payload).select().single();
+        if (error) throw error;
+        adminFinanceEntries.unshift(normalizeAdminFinanceEntry(data));
+        document.getElementById('event-finance-amount').value = '';
+        document.getElementById('event-finance-notes').value = '';
+        renderEventFinanceModal();
+        renderEventsList();
+        refreshActivePipelineStage();
+        showToast(`${entryType === 'investment' ? 'Investment' : 'Expense'} saved privately.`);
+    } catch (error) {
+        console.error('Admin finance entry could not be saved', error);
+        showToast('Expense could not be saved. Please try again.');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = '<i class="fa-solid fa-plus"></i> Add Entry';
+    }
+}
+
+async function deleteEventFinanceEntry(entryId) {
+    if (!currentAdminEmail || !confirm('Delete this internal finance entry?')) return;
+    const previousEntries = adminFinanceEntries.slice();
+    adminFinanceEntries = adminFinanceEntries.filter(entry => String(entry.id) !== String(entryId));
+    renderEventFinanceModal();
+    renderEventsList();
+    refreshActivePipelineStage();
+    const { error } = await sb.from('event_finance_entries').delete().eq('id', entryId);
+    if (error) {
+        adminFinanceEntries = previousEntries;
+        renderEventFinanceModal();
+        renderEventsList();
+        refreshActivePipelineStage();
+        console.error('Admin finance entry could not be deleted', error);
+        showToast('Entry could not be deleted. Please try again.');
+        return;
+    }
+    showToast('Internal finance entry deleted.');
 }
 
 // ==========================================
@@ -1640,7 +3713,7 @@ function renderQuotationsList() {
             loadQuotationTab();
         };
 
-        const calcs = getEventInvoiceCalculations(evt);
+        const calcs = getQuotationCalculations(evt);
         const uniqueNumber = evt.id.split('_')[1].substring(4, 9);
         const quoteNum = `QTN-${uniqueNumber}`;
 
@@ -1666,6 +3739,7 @@ function startQuotationForEvent(eventId) {
 function openQuotationEditor(eventId) {
     const event = appState.events.find(e => e.id === eventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
     hideView('quotation-placeholder');
     showView('quotation-editor');
@@ -1693,90 +3767,47 @@ function openQuotationEditor(eventId) {
 
     renderQuotationItems(event);
     renderQuotationBonusItems(event);
-    document.getElementById('q-discount-input').value = event.discount || 0;
+    document.getElementById('q-discount-input').value = quote.discount || 0;
     calculateQuotationTotals();
 }
 
 function renderQuotationItems(event) {
-    const tbody = document.getElementById('quotation-items-tbody');
-    tbody.innerHTML = '';
-
-    if (!event.items || event.items.length === 0) {
-        event.items = [{ desc: event.serviceType + ' Service', rate: event.budget, qty: 1 }];
-    }
-
-    event.items.forEach((item, index) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>
-                <input type="text" class="table-input" value="${item.desc}" onchange="updateQuotationItemField(${index}, 'desc', this.value)">
-            </td>
-            <td class="text-right">
-                <input type="number" class="table-input text-right" value="${item.rate}" onchange="updateQuotationItemField(${index}, 'rate', parseFloat(this.value) || 0)">
-            </td>
-            <td class="text-right">
-                <input type="number" class="table-input text-right" value="${item.qty}" min="1" onchange="updateQuotationItemField(${index}, 'qty', parseInt(this.value) || 1)">
-            </td>
-            <td class="text-right font-bold" id="q-item-total-${index}">₹${(item.rate * item.qty).toFixed(2)}</td>
-            <td class="actions-col no-print text-center">
-                <button class="action-icon-btn danger" onclick="removeQuotationItem(${index})"><i class="fa-solid fa-xmark"></i></button>
-            </td>
-        `;
-        tbody.appendChild(tr);
-
-        // Sub-services under this item (e.g. Decoration -> Stage Decoration,
-        // Backdrop, Sofa...) - description only, no price/qty of their own,
-        // since only the parent service line carries the price.
-        (item.subItems || []).forEach((subDesc, subIndex) => {
-            const subTr = document.createElement('tr');
-            subTr.className = 'quotation-sub-item-row';
-            subTr.innerHTML = `
-                <td colspan="4">
-                    <span class="sub-item-bullet">-</span>
-                    <input type="text" class="table-input sub-item-input" value="${subDesc}" onchange="updateQuotationSubItemField(${index}, ${subIndex}, this.value)">
-                </td>
-                <td class="actions-col no-print text-center">
-                    <button class="action-icon-btn danger" onclick="removeQuotationSubItem(${index}, ${subIndex})"><i class="fa-solid fa-xmark"></i></button>
-                </td>
-            `;
-            tbody.appendChild(subTr);
-        });
-
-        const addSubTr = document.createElement('tr');
-        addSubTr.className = 'no-print';
-        addSubTr.innerHTML = `
-            <td colspan="5" class="add-sub-item-row">
-                <button class="btn text-btn" onclick="addQuotationSubItem(${index})"><i class="fa-solid fa-plus"></i> Add Sub-service</button>
-            </td>
-        `;
-        tbody.appendChild(addSubTr);
-    });
+    const doc = getQuotationDocument(event);
+    if (!doc.items.length) doc.items.push({ desc: event.serviceType ? event.serviceType + ' Service' : '', rate: optionalDocumentNumber(event.budget), qty: null });
+    document.getElementById('quotation-items-tbody').innerHTML = renderPricedDocumentRows(doc.items, 'quotation');
 }
 
 function addQuotationSubItem(itemIndex) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    const item = event.items[itemIndex];
+    const item = quote.items[itemIndex];
     if (!item.subItems) item.subItems = [];
-    item.subItems.push('New sub-service');
+    item.subItems.push({ desc: '', rate: null, qty: null });
 
     renderQuotationItems(event);
+    saveState();
 }
 
 function removeQuotationSubItem(itemIndex, subIndex) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    event.items[itemIndex].subItems.splice(subIndex, 1);
+    quote.items[itemIndex].subItems.splice(subIndex, 1);
     renderQuotationItems(event);
+    saveState();
 }
 
 function updateQuotationSubItemField(itemIndex, subIndex, val) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    event.items[itemIndex].subItems[subIndex] = val;
+    const subItem = normalizePricedSubItem(quote.items[itemIndex].subItems[subIndex]);
+    quote.items[itemIndex].subItems[subIndex] = { ...subItem, desc: val };
+    saveState();
 }
 
 function addPresetServiceToQuotation(serviceName) {
@@ -1786,53 +3817,59 @@ function addPresetServiceToQuotation(serviceName) {
 
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    if (!event.items) event.items = [];
-    event.items.push({ desc: preset.name, rate: preset.rate, qty: 1 });
+    quote.items.push({ desc: preset.name, rate: preset.rate, qty: 1 });
 
     renderQuotationItems(event);
     calculateQuotationTotals();
+    saveState();
     showToast(`Added ${preset.name} to Quotation.`);
 }
 
 function addQuotationItem() {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    if (!event.items) event.items = [];
-    event.items.push({ desc: 'New Line Item', rate: 0, qty: 1 });
-    
+    quote.items.push({ desc: '', rate: null, qty: null });
+
     renderQuotationItems(event);
     calculateQuotationTotals();
+    saveState();
 }
 
 // Fixed Quotation Items array deletion indexing logic error
 function removeQuotationItem(idx) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    if (event.items.length <= 1) {
+    if (quote.items.length <= 1) {
         showToast('Must have at least one line item.');
         return;
     }
 
-    event.items.splice(idx, 1);
+    quote.items.splice(idx, 1);
     renderQuotationItems(event);
     calculateQuotationTotals();
+    saveState();
 }
 
 function updateQuotationItemField(idx, field, val) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    event.items[idx][field] = val;
-    
+    quote.items[idx][field] = val;
+
     const itemTotalEl = document.getElementById(`q-item-total-${idx}`);
     if (itemTotalEl) {
-        itemTotalEl.textContent = `₹${(event.items[idx].rate * event.items[idx].qty).toFixed(2)}`;
+        itemTotalEl.textContent = `₹${(quote.items[idx].rate * quote.items[idx].qty).toFixed(2)}`;
     }
-    
+
     calculateQuotationTotals();
+    saveState();
 }
 
 // Bonus / complimentary items - a separate list shown under its own "BONUS
@@ -1840,26 +3877,32 @@ function updateQuotationItemField(idx, field, val) {
 // free extras (arches, name boards, etc.) are called out separately from
 // the paid service items above.
 function renderQuotationBonusItems(event) {
+    const quote = getQuotationDocument(event);
     const tbody = document.getElementById('quotation-bonus-tbody');
     const totalRow = document.getElementById('q-bonus-total-row');
+    const bonusSection = document.getElementById('q-bonus-section');
+    const bonusTrigger = document.getElementById('q-bonus-add-trigger');
     tbody.innerHTML = '';
 
-    if (!event.bonusItems) event.bonusItems = [];
-
-    if (event.bonusItems.length === 0) {
+    if (quote.bonusItems.length === 0) {
         totalRow.classList.add('hidden');
+        bonusSection.classList.add('hidden');
+        if (bonusTrigger) bonusTrigger.classList.remove('hidden');
         return;
     }
+
+    bonusSection.classList.remove('hidden');
+    if (bonusTrigger) bonusTrigger.classList.add('hidden');
     totalRow.classList.remove('hidden');
 
-    event.bonusItems.forEach((item, index) => {
+    quote.bonusItems.forEach((item, index) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>
-                <input type="text" class="table-input" value="${item.desc}" onchange="updateQuotationBonusItemField(${index}, 'desc', this.value)">
+                <span class="document-editable" contenteditable="true" role="textbox" aria-label="Bonus item description" onkeydown="handleInlineEditorKey(event)" onblur="updateQuotationBonusItemField(${index}, 'desc', this.textContent.trim())">${escapeDocumentText(item.desc)}</span>
             </td>
             <td class="text-right" width="140">
-                <input type="number" class="table-input text-right" value="${item.rate}" onchange="updateQuotationBonusItemField(${index}, 'rate', parseFloat(this.value) || 0)">
+                <span class="document-editable numeric-editable" contenteditable="true" role="textbox" inputmode="decimal" aria-label="Bonus item value" onkeydown="handleInlineEditorKey(event)" onblur="updateQuotationBonusItemField(${index}, 'rate', normalizeInlineNumber(this, 0))">${Number(item.rate) || 0}</span>
             </td>
             <td class="actions-col no-print text-center" width="50">
                 <button class="action-icon-btn danger" onclick="removeQuotationBonusItem(${index})"><i class="fa-solid fa-xmark"></i></button>
@@ -1872,51 +3915,73 @@ function renderQuotationBonusItems(event) {
 function addQuotationBonusItem() {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    if (!event.bonusItems) event.bonusItems = [];
-    event.bonusItems.push({ desc: 'New Bonus Item', rate: 0, qty: 1 });
+    quote.bonusItems.push({ desc: 'New Bonus Item', rate: 0, qty: 1 });
 
     renderQuotationBonusItems(event);
     calculateQuotationTotals();
+    saveState();
 }
 
 function removeQuotationBonusItem(idx) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    event.bonusItems.splice(idx, 1);
+    quote.bonusItems.splice(idx, 1);
     renderQuotationBonusItems(event);
     calculateQuotationTotals();
+    saveState();
 }
 
 function updateQuotationBonusItemField(idx, field, val) {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
-    event.bonusItems[idx][field] = val;
+    quote.bonusItems[idx][field] = val;
     calculateQuotationTotals();
+    saveState();
+}
+
+function removeAllQuotationBonusItems() {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+    const quote = getQuotationDocument(event);
+
+    if (quote.bonusItems.length === 0) return;
+
+    if (!confirm('Remove the entire Bonus Free section and all its items?')) return;
+
+    quote.bonusItems = [];
+    renderQuotationBonusItems(event);
+    calculateQuotationTotals();
+    saveState();
+    showToast('Bonus box removed.');
 }
 
 function calculateQuotationTotals() {
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
     let subtotal = 0;
-    if (event.items) {
-        event.items.forEach(item => {
-            subtotal += (item.rate * item.qty);
+    if (quote.items) {
+        quote.items.forEach(item => {
+            subtotal += getDocumentItemTotal(item);
         });
     }
 
     let bonusTotal = 0;
-    if (event.bonusItems) {
-        event.bonusItems.forEach(item => {
+    if (quote.bonusItems) {
+        quote.bonusItems.forEach(item => {
             bonusTotal += (item.rate * (item.qty || 1));
         });
     }
 
     const discountVal = parseFloat(document.getElementById('q-discount-input').value) || 0;
-    event.discount = discountVal;
+    quote.discount = discountVal;
 
     const grandTotal = Math.max(0, subtotal - discountVal);
 
@@ -1926,20 +3991,28 @@ function calculateQuotationTotals() {
     document.getElementById('q-bonus-total').textContent = `₹${bonusTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function saveQuotationChanges() {
+async function saveQuotationChanges() {
+    if (document.activeElement?.isContentEditable) document.activeElement.blur();
     const event = appState.events.find(e => e.id === currentQuotationEventId);
     if (!event) return;
+    const quote = getQuotationDocument(event);
 
     const discountVal = parseFloat(document.getElementById('q-discount-input').value) || 0;
-    event.discount = discountVal;
+    quote.discount = discountVal;
+    markQuotationSaved(event);
 
-    saveState();
+    if (event.stageIndex >= 2 && event.stageIndex < 3) {
+        copyQuotationToInvoice(event);
+    }
+
+    if (!await saveState()) { showToast('Quotation could not be saved. Please try again.'); return; }
     showToast('Quotation details saved!');
     refreshAllViews();
     loadQuotationTab();
 }
 
 function printQuotation() {
+    if (document.activeElement?.isContentEditable) document.activeElement.blur();
     window.print();
 }
 
@@ -1950,6 +4023,7 @@ function printQuotation() {
 // Renders a DOM node to a JPEG Blob using html2canvas, skipping any
 // screen-only controls (.no-print) so the exported image matches print output.
 function captureElementAsJPEGBlob(elementId) {
+    if (document.activeElement?.isContentEditable) document.activeElement.blur();
     const el = document.getElementById(elementId);
     if (!el || typeof html2canvas === 'undefined') {
         showToast('Image export is unavailable right now. Please try Print instead.');
@@ -2026,22 +4100,34 @@ function shareInvoiceJPEG() {
     shareElementAsJPEG('invoice-print-area', `${getInvoiceNumber(event)}.jpg`, 'DD Events Invoice');
 }
 
-function shareQuotationWhatsApp() {
-    const event = appState.events.find(e => e.id === currentQuotationEventId);
-    if (!event) return;
+function normalizeWhatsAppPhone(value) {
+    let digits = String(value || '').replace(/[^0-9]/g, '');
+    if (digits.startsWith('00')) digits = digits.substring(2);
+    else if (digits.startsWith('0')) digits = digits.substring(1);
+    if (digits.length === 10) digits = `91${digits}`;
+    return /^[1-9][0-9]{9,14}$/.test(digits) ? digits : '';
+}
 
-    const calcs = getEventInvoiceCalculations(event);
+function openWhatsAppChat(phone, message = '') {
+    const cleanPhone = normalizeWhatsAppPhone(phone);
+    if (!cleanPhone) {
+        showToast('Add a valid customer phone number first.');
+        return false;
+    }
+    const text = message ? `?text=${encodeURIComponent(message)}` : '';
+    window.open(`https://wa.me/${cleanPhone}${text}`, '_blank', 'noopener,noreferrer');
+    return true;
+}
+
+function buildQuotationWhatsAppMessage(event) {
+    const quote = getQuotationDocument(event);
+    const calcs = getQuotationCalculations(event);
     const uniqueNumber = event.id.split('_')[1].substring(4, 9);
     const quoteNum = `QTN-${uniqueNumber}`;
 
-    let itemsText = '';
-    if (event.items) {
-        event.items.forEach(item => {
-            itemsText += `\n- ${item.desc}: ₹${item.rate} x ${item.qty} = ₹${item.rate * item.qty}`;
-        });
-    }
+    const itemsText = documentItemsText(quote.items);
 
-    const message = `*QUOTATION - DD EVENTS*
+    return `*QUOTATION - DD EVENTS*
 -------------------------------
 *Quote No:* ${quoteNum}
 *Customer:* ${event.clientName}
@@ -2066,21 +4152,12 @@ AL.AR. Street, Kalayarkovil
 Call: 6374503310, 6384203310
 Thank you!`;
 
-    let cleanPhone = event.clientPhone.replace(/[^0-9]/g, '');
-    if (cleanPhone.startsWith('0')) {
-        cleanPhone = cleanPhone.substring(1);
-    }
-    if (cleanPhone.length === 10) {
-        cleanPhone = '91' + cleanPhone;
-    }
+}
 
-    if (!cleanPhone) {
-        showToast('Please set a valid customer phone number first.');
-        return;
-    }
-
-    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-    window.open(waUrl, '_blank');
+function shareQuotationWhatsApp() {
+    const event = appState.events.find(e => e.id === currentQuotationEventId);
+    if (!event) return;
+    openWhatsAppChat(event.clientPhone, buildQuotationWhatsAppMessage(event));
 }
 
 function filterQuotations() {
@@ -2153,6 +4230,7 @@ function startBillingForEvent(eventId) {
 function openInvoiceEditor(eventId) {
     const event = appState.events.find(e => e.id === eventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
     hideView('invoice-placeholder');
     showView('invoice-editor');
@@ -2170,38 +4248,127 @@ function openInvoiceEditor(eventId) {
     document.getElementById('inv-event-venue').textContent = event.venue || '-';
 
     renderInvoiceItems(event);
-    document.getElementById('inv-discount-input').value = event.discount || 0;
+    renderInvoiceBonusItems(event);
+    document.getElementById('inv-discount-input').value = invoice.discount || 0;
     calculateInvoiceTotals();
     renderPaymentHistory(event);
 }
 
 function renderInvoiceItems(event) {
-    const tbody = document.getElementById('invoice-items-tbody');
+    const doc = getInvoiceDocument(event);
+    if (!doc.items.length) doc.items.push({ desc: event.serviceType ? event.serviceType + ' Service' : '', rate: optionalDocumentNumber(event.budget), qty: null });
+    document.getElementById('invoice-items-tbody').innerHTML = renderPricedDocumentRows(doc.items, 'invoice');
+}
+
+function addInvoiceSubItem(itemIndex) {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    const item = invoice.items[itemIndex];
+    if (!item.subItems) item.subItems = [];
+    item.subItems.push({ desc: '', rate: null, qty: null });
+
+    renderInvoiceItems(event);
+    saveState();
+}
+
+function removeInvoiceSubItem(itemIndex, subIndex) {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    invoice.items[itemIndex].subItems.splice(subIndex, 1);
+    renderInvoiceItems(event);
+    saveState();
+}
+
+function updateInvoiceSubItemField(itemIndex, subIndex, val) {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    const subItem = normalizePricedSubItem(invoice.items[itemIndex].subItems[subIndex]);
+    invoice.items[itemIndex].subItems[subIndex] = { ...subItem, desc: val };
+    saveState();
+}
+
+// Bonus items on the invoice - same data as quotation.bonusItems, so what
+// admin marked as "free" in the quote continues to show on the final bill.
+function renderInvoiceBonusItems(event) {
+    const invoice = getInvoiceDocument(event);
+    const tbody = document.getElementById('invoice-bonus-tbody');
+    const bonusSection = document.getElementById('inv-bonus-section');
+    const bonusTrigger = document.getElementById('inv-bonus-add-trigger');
+    if (!tbody) return;
     tbody.innerHTML = '';
 
-    if (!event.items || event.items.length === 0) {
-        event.items = [{ desc: event.serviceType + ' Service', rate: event.budget, qty: 1 }];
+    if (invoice.bonusItems.length === 0) {
+        bonusSection.classList.add('hidden');
+        if (bonusTrigger) bonusTrigger.classList.remove('hidden');
+        return;
     }
 
-    event.items.forEach((item, index) => {
+    bonusSection.classList.remove('hidden');
+    if (bonusTrigger) bonusTrigger.classList.add('hidden');
+
+    invoice.bonusItems.forEach((item, index) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>
-                <input type="text" class="table-input" value="${item.desc}" onchange="updateItemField(${index}, 'desc', this.value)">
+                <span class="document-editable" contenteditable="true" role="textbox" aria-label="Bonus item description" onkeydown="handleInlineEditorKey(event)" onblur="updateInvoiceBonusItemField(${index}, 'desc', this.textContent.trim())">${escapeDocumentText(item.desc)}</span>
             </td>
-            <td class="text-right">
-                <input type="number" class="table-input text-right" value="${item.rate}" onchange="updateItemField(${index}, 'rate', parseFloat(this.value) || 0)">
-            </td>
-            <td class="text-right">
-                <input type="number" class="table-input text-right" value="${item.qty}" min="1" onchange="updateItemField(${index}, 'qty', parseInt(this.value) || 1)">
-            </td>
-            <td class="text-right font-bold" id="item-total-${index}">₹${(item.rate * item.qty).toFixed(2)}</td>
-            <td class="actions-col no-print text-center">
-                <button class="action-icon-btn danger" onclick="removeInvoiceItem(${index})"><i class="fa-solid fa-xmark"></i></button>
+            <td class="actions-col no-print text-center" width="50">
+                <button class="action-icon-btn danger" onclick="removeInvoiceBonusItem(${index})"><i class="fa-solid fa-xmark"></i></button>
             </td>
         `;
         tbody.appendChild(tr);
     });
+}
+
+function addInvoiceBonusItem() {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    invoice.bonusItems.push({ desc: 'New Bonus Item', rate: 0, qty: 1 });
+
+    renderInvoiceBonusItems(event);
+    saveState();
+}
+
+function removeInvoiceBonusItem(idx) {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    invoice.bonusItems.splice(idx, 1);
+    renderInvoiceBonusItems(event);
+    saveState();
+}
+
+function updateInvoiceBonusItemField(idx, field, val) {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    invoice.bonusItems[idx][field] = val;
+    saveState();
+}
+
+function removeAllInvoiceBonusItems() {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    if (invoice.bonusItems.length === 0) return;
+
+    if (!confirm('Remove the entire Bonus Free section and all its items?')) return;
+
+    invoice.bonusItems = [];
+    renderInvoiceBonusItems(event);
+    saveState();
+    showToast('Bonus box removed.');
 }
 
 function addPresetServiceToInvoice(serviceName) {
@@ -2211,67 +4378,77 @@ function addPresetServiceToInvoice(serviceName) {
 
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
-    if (!event.items) event.items = [];
-    event.items.push({ desc: preset.name, rate: preset.rate, qty: 1 });
+    invoice.items.push({ desc: preset.name, rate: preset.rate, qty: 1 });
 
     renderInvoiceItems(event);
     calculateInvoiceTotals();
+    saveState();
     showToast(`Added ${preset.name} to Invoice.`);
 }
 
 function addInvoiceItem() {
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
-    if (!event.items) event.items = [];
-    event.items.push({ desc: 'New Line Item', rate: 0, qty: 1 });
-    
+    invoice.items.push({ desc: '', rate: null, qty: null });
+
     renderInvoiceItems(event);
     calculateInvoiceTotals();
+    saveState();
 }
 
 function removeInvoiceItem(idx) {
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
-    if (event.items.length <= 1) {
+    if (invoice.items.length <= 1) {
         showToast('Must have at least one line item.');
         return;
     }
 
-    event.items.splice(idx, 1);
+    invoice.items.splice(idx, 1);
     renderInvoiceItems(event);
     calculateInvoiceTotals();
+    saveState();
 }
 
 function updateItemField(idx, field, val) {
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
-    event.items[idx][field] = val;
-    
+    invoice.items[idx][field] = val;
+
     const itemTotalEl = document.getElementById(`item-total-${idx}`);
     if (itemTotalEl) {
-        itemTotalEl.textContent = `₹${(event.items[idx].rate * event.items[idx].qty).toFixed(2)}`;
+        itemTotalEl.textContent = `₹${(invoice.items[idx].rate * invoice.items[idx].qty).toFixed(2)}`;
     }
-    
+
     calculateInvoiceTotals();
+    saveState();
 }
 
 function calculateInvoiceTotals() {
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
+
+    const photographyNote = document.getElementById('photography-delivery-note');
+    if (photographyNote) photographyNote.classList.toggle('hidden', !hasPhotographyService(invoice.items));
 
     let subtotal = 0;
-    if (event.items) {
-        event.items.forEach(item => {
-            subtotal += (item.rate * item.qty);
+    if (invoice.items) {
+        invoice.items.forEach(item => {
+            subtotal += getDocumentItemTotal(item);
         });
     }
 
     const discountVal = parseFloat(document.getElementById('inv-discount-input').value) || 0;
-    event.discount = discountVal;
+    invoice.discount = discountVal;
 
     const grandTotal = Math.max(0, subtotal - discountVal);
     
@@ -2294,14 +4471,27 @@ function calculateInvoiceTotals() {
     }
 }
 
-function saveInvoiceChanges() {
+function openCurrentInvoiceDocuments() {
+    if (!currentInvoiceEventId) {
+        showToast('Select an invoice first.');
+        return;
+    }
+
+    openEventDocuments(currentInvoiceEventId);
+}
+
+async function saveInvoiceChanges() {
+    if (document.activeElement?.isContentEditable) document.activeElement.blur();
     const event = appState.events.find(e => e.id === currentInvoiceEventId);
     if (!event) return;
+    const invoice = getInvoiceDocument(event);
 
     const discountVal = parseFloat(document.getElementById('inv-discount-input').value) || 0;
-    event.discount = discountVal;
+    invoice.discount = discountVal;
+    invoice.savedAt = new Date().toISOString();
+    syncLegacyDocumentFields(event, invoice);
 
-    saveState();
+    if (!await saveState()) { showToast('Invoice could not be saved. Please try again.'); return; }
     showToast('Invoice details saved!');
     refreshAllViews();
     loadBillingTab();
@@ -2379,13 +4569,11 @@ function renderPaymentHistory(event) {
 }
 
 function printInvoice() {
+    if (document.activeElement?.isContentEditable) document.activeElement.blur();
     window.print();
 }
 
-function shareInvoiceWhatsApp() {
-    const event = appState.events.find(e => e.id === currentInvoiceEventId);
-    if (!event) return;
-
+function buildInvoiceWhatsAppMessage(event) {
     const calcs = getEventInvoiceCalculations(event);
     const invoiceNum = getInvoiceNumber(event);
 
@@ -2398,7 +4586,7 @@ function shareInvoiceWhatsApp() {
         paymentsText = '\n- No payments logged yet';
     }
 
-    const message = `*TAX INVOICE - DD EVENTS*
+    return `*TAX INVOICE - DD EVENTS*
 -------------------------------
 *Invoice No:* ${invoiceNum}
 *Customer:* ${event.clientName}
@@ -2420,21 +4608,185 @@ AL.AR. Street, Kalayarkovil
 Call: 6374503310, 6384203310
 Thank you!`;
 
-    let cleanPhone = event.clientPhone.replace(/[^0-9]/g, '');
-    if (cleanPhone.startsWith('0')) {
-        cleanPhone = cleanPhone.substring(1);
+}
+
+function shareInvoiceWhatsApp() {
+    const event = appState.events.find(e => e.id === currentInvoiceEventId);
+    if (!event) return;
+    openWhatsAppChat(event.clientPhone, buildInvoiceWhatsAppMessage(event));
+}
+
+function openWhatsAppCenter() {
+    const search = document.getElementById('whatsapp-center-search');
+    if (search) search.value = '';
+    renderWhatsAppCenter();
+    openModal('whatsapp-center-modal');
+}
+
+function openCustomerWhatsApp(eventId, type) {
+    const event = appState.events.find(item => item.id === eventId);
+    if (!event) {
+        showToast('Customer record not found.');
+        return false;
     }
-    if (cleanPhone.length === 10) {
-        cleanPhone = '91' + cleanPhone;
+    const stageIndex = Number(event.stageIndex || 0);
+    if (type === 'invoice' && stageIndex < 2) {
+        showToast('Invoice is available after Advance Pay / Date Booked.');
+        return false;
+    }
+    if (type === 'booking-welcome' && stageIndex < 2) {
+        showToast('Booking welcome is available after Advance Pay / Date Booked.');
+        return false;
+    }
+    if (type === 'event-thanks' && stageIndex < 4) {
+        showToast('Event thank-you is available after execution moves to Pending Bill.');
+        return false;
+    }
+    if (type === 'payment-thanks') {
+        const calcs = getEventInvoiceCalculations(event);
+        if (stageIndex < 5) {
+            showToast('Payment thank-you is available at Completed Bill.');
+            return false;
+        }
+        if (calcs.pendingBalance > 0) {
+            showToast(`₹${calcs.pendingBalance.toLocaleString('en-IN')} is still pending. Record the full payment before sending a payment thank-you.`);
+            return false;
+        }
+    }
+    let message = `Hi ${event.clientName || 'Customer'},`;
+    if (type === 'quotation') message = buildQuotationWhatsAppMessage(event);
+    if (type === 'invoice') message = buildInvoiceWhatsAppMessage(event);
+    if (type === 'booking-welcome') message = buildBookingWelcomeMessage(event);
+    if (type === 'event-thanks') message = buildEventThankYouMessage(event);
+    if (type === 'payment-thanks') message = buildPaymentThankYouMessage(event);
+    return openWhatsAppChat(event.clientPhone, message);
+}
+
+function buildBookingWelcomeMessage(event) {
+    return `*WELCOME TO DD EVENTS*
+-------------------------------
+Hi *${event.clientName || 'Customer'}*,
+
+Your booking is confirmed. Welcome to the DD Events family!
+
+*Service:* ${event.serviceType || '-'}
+*Event Date:* ${formatDisplayDate(event.eventDate) || '-'}
+*Venue:* ${event.venue || '-'}
+
+We are happy to be part of your special event. Our team will keep you updated as the event date approaches.
+
+For any questions, call 6374503310 or 6384203310.
+
+Thank you for choosing DD Events!`;
+}
+
+function buildEventThankYouMessage(event) {
+    return `*THANK YOU FROM DD EVENTS*
+-------------------------------
+Hi *${event.clientName || 'Customer'}*,
+
+Thank you for trusting DD Events for your ${event.serviceType || 'event'} on ${formatDisplayDate(event.eventDate) || 'the scheduled date'}.
+
+It was a pleasure to be part of your special occasion. We hope you and your guests had a wonderful experience.
+
+We look forward to celebrating with you again!
+
+With thanks,
+*DD Events (Events & Management)*`;
+}
+
+function buildPaymentThankYouMessage(event) {
+    const calcs = getEventInvoiceCalculations(event);
+    return `*PAYMENT RECEIVED - DD EVENTS*
+-------------------------------
+Hi *${event.clientName || 'Customer'}*,
+
+Thank you. We have received the full payment for your ${event.serviceType || 'event'}.
+
+*Invoice:* ${getInvoiceNumber(event)}
+*Amount Received:* ₹${calcs.totalPaid.toLocaleString('en-IN')}
+*Pending Balance:* ₹0
+
+Your bill is now complete. Thank you for choosing DD Events!
+
+With thanks,
+*DD Events (Events & Management)*`;
+}
+
+async function shareCustomerDocumentImage(eventId, type) {
+    const event = appState.events.find(item => item.id === eventId);
+    if (!event) {
+        showToast('Customer record not found.');
+        return false;
+    }
+    if (type === 'invoice' && Number(event.stageIndex || 0) < 2) {
+        showToast('Bill image is available after Advance Pay / Date Booked.');
+        return false;
     }
 
-    if (!cleanPhone) {
-        showToast('Please set a valid customer phone number first.');
+    closeModal('whatsapp-center-modal');
+    if (type === 'quotation') {
+        currentQuotationEventId = event.id;
+        switchTab('quotation');
+        const uniqueNumber = event.id.split('_')[1].substring(4, 9);
+        await shareElementAsJPEG('quotation-print-area', `Quotation-${uniqueNumber}.jpg`, 'DD Events Quotation');
+        return true;
+    }
+
+    currentInvoiceEventId = event.id;
+    switchTab('billing');
+    await shareElementAsJPEG('invoice-print-area', `${getInvoiceNumber(event)}.jpg`, 'DD Events Bill');
+    return true;
+}
+
+function renderWhatsAppCenter() {
+    const container = document.getElementById('whatsapp-center-list');
+    if (!container) return;
+    const search = String(document.getElementById('whatsapp-center-search')?.value || '').trim().toLowerCase();
+    const events = [...(appState.events || [])]
+        .filter(event => [event.clientName, event.clientPhone, event.serviceType, getStageLabel(event.status)]
+            .some(value => String(value || '').toLowerCase().includes(search)))
+        .sort((a, b) => String(b.eventDate || '').localeCompare(String(a.eventDate || '')));
+
+    if (!events.length) {
+        container.innerHTML = '<div class="empty-state"><i class="fa-brands fa-whatsapp"></i><p>No matching customers found.</p></div>';
         return;
     }
 
-    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-    window.open(waUrl, '_blank');
+    container.innerHTML = events.map(event => {
+        const hasPhone = Boolean(normalizeWhatsAppPhone(event.clientPhone));
+        const stageIndex = Number(event.stageIndex || 0);
+        const invoiceReady = stageIndex >= 2;
+        const bookingWelcomeReady = hasPhone && stageIndex >= 2;
+        const eventThanksReady = hasPhone && stageIndex >= 4;
+        const paymentCalcs = getEventInvoiceCalculations(event);
+        const paymentThanksReady = hasPhone && stageIndex >= 5 && paymentCalcs.pendingBalance <= 0;
+        const disabled = hasPhone ? '' : ' disabled';
+        const invoiceDisabled = hasPhone && invoiceReady ? '' : ' disabled';
+        const phoneText = hasPhone ? escapeDocumentText(event.clientPhone) : 'Phone number required';
+        const eventArgument = escapeDocumentText(JSON.stringify(String(event.id)));
+        return `<article class="whatsapp-customer-row">
+            <div class="whatsapp-customer-details">
+                <strong>${escapeDocumentText(event.clientName || 'Unnamed customer')}</strong>
+                <span><i class="fa-solid fa-phone"></i> ${phoneText}</span>
+                <small>${escapeDocumentText(event.serviceType || 'Service not set')} · ${escapeDocumentText(formatDisplayDate(event.eventDate))} · ${escapeDocumentText(getStageLabel(event.status))}</small>
+            </div>
+            <div class="whatsapp-customer-actions">
+                <div class="whatsapp-action-group"><span>Documents</span><div>
+                    <button type="button" class="whatsapp-action-btn primary" onclick="openCustomerWhatsApp(${eventArgument}, 'quotation')"${disabled} title="Open customer chat with quotation text"><i class="fa-solid fa-file-lines"></i> Quotation Text</button>
+                    <button type="button" class="whatsapp-action-btn image" onclick="shareCustomerDocumentImage(${eventArgument}, 'quotation')" title="Share quotation as a JPEG image"><i class="fa-solid fa-image"></i> Quote Image</button>
+                    <button type="button" class="whatsapp-action-btn" onclick="openCustomerWhatsApp(${eventArgument}, 'invoice')"${invoiceDisabled} title="${invoiceReady ? 'Open customer chat with bill text' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-receipt"></i> Bill Text</button>
+                    <button type="button" class="whatsapp-action-btn image" onclick="shareCustomerDocumentImage(${eventArgument}, 'invoice')"${invoiceReady ? '' : ' disabled'} title="${invoiceReady ? 'Share bill as a JPEG image' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-file-image"></i> Bill Image</button>
+                </div></div>
+                <div class="whatsapp-action-group"><span>Customer Messages</span><div>
+                    <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'booking-welcome')"${bookingWelcomeReady ? '' : ' disabled'} title="${stageIndex >= 2 ? 'Send booking confirmation and welcome' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-handshake"></i> Booking Welcome</button>
+                    <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'event-thanks')"${eventThanksReady ? '' : ' disabled'} title="${stageIndex >= 4 ? 'Thank the customer after event execution' : 'Available after Event Execution'}"><i class="fa-solid fa-heart"></i> Event Thank You</button>
+                    <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'payment-thanks')"${paymentThanksReady ? '' : ' disabled'} title="${stageIndex < 5 ? 'Available at Completed Bill' : paymentCalcs.pendingBalance > 0 ? 'Full payment must be recorded first' : 'Confirm full payment and thank the customer'}"><i class="fa-solid fa-circle-check"></i> Payment Thank You</button>
+                    <button type="button" class="whatsapp-action-btn" onclick="openCustomerWhatsApp(${eventArgument}, 'chat')"${disabled}><i class="fa-brands fa-whatsapp"></i> Chat</button>
+                </div></div>
+            </div>
+        </article>`;
+    }).join('');
 }
 
 // Helpers
@@ -2445,16 +4797,10 @@ function getInvoiceNumber(event) {
 }
 
 function getEventInvoiceCalculations(event) {
-    let subtotal = 0;
-    if (event.items) {
-        event.items.forEach(item => {
-            subtotal += (item.rate * item.qty);
-        });
-    } else {
-        subtotal = event.budget || 0;
-    }
-    const discount = event.discount || 0;
-    const grandTotal = Math.max(0, subtotal - discount);
+    const documentData = event.stageIndex >= 2
+        ? getInvoiceDocument(event)
+        : getQuotationDocument(event);
+    const { subtotal, discount, grandTotal } = getDocumentCalculations(documentData);
     
     let totalPaid = 0;
     if (event.payments) {
@@ -2512,25 +4858,280 @@ function renderAttendanceStaffDropdowns() {
 }
 
 function renderStaffConfigTable() {
-    const tbody = document.getElementById('staff-members-tbody');
-    tbody.innerHTML = '';
+    const groupsContainer = document.getElementById('staff-members-groups');
+    const departmentContainer = document.getElementById('staff-department-counts');
+    const subworkContainer = document.getElementById('staff-subwork-counts');
+    const activeFilter = document.getElementById('staff-directory-active-filter');
+    if (!groupsContainer || !departmentContainer || !subworkContainer || !activeFilter) return;
 
-    if (appState.staff.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="text-center">No staff members configured.</td></tr>';
+    const staffList = appState.staff || [];
+    const departmentCounts = new Map();
+    const departmentSubworkCounts = new Map();
+    staffList.forEach(member => {
+        const department = member.department || member.role || 'Department not set';
+        departmentCounts.set(department, (departmentCounts.get(department) || 0) + 1);
+        if (!departmentSubworkCounts.has(department)) departmentSubworkCounts.set(department, new Map());
+        normalizeStaffWorkRoles(member.workRoles).forEach(role => {
+            const departmentRoles = departmentSubworkCounts.get(department);
+            departmentRoles.set(role, (departmentRoles.get(role) || 0) + 1);
+        });
+    });
+
+    const isActive = (type, value = '') => currentStaffDirectoryFilter.type === type && currentStaffDirectoryFilter.value === value;
+    const filterButton = (type, value, label, count, icon) => `
+        <button type="button" class="staff-count-card ${isActive(type, value) ? 'active' : ''}"
+            data-filter-type="${escapeDocumentText(type)}" data-filter-value="${escapeDocumentText(value)}"
+            onclick="setStaffDirectoryFilterFromButton(this)">
+            <i class="fa-solid ${icon}"></i><span>${escapeDocumentText(label)}</span><strong>${count}</strong>
+        </button>`;
+
+    departmentContainer.innerHTML = filterButton('all', '', 'All Staff', staffList.length, 'fa-users') +
+        [...departmentCounts.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([department, count]) => filterButton('department', department, department, count, 'fa-briefcase'))
+            .join('');
+
+    subworkContainer.innerHTML = departmentCounts.size
+        ? [...departmentCounts.entries()]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([department, staffCount]) => {
+                const assignedCounts = departmentSubworkCounts.get(department) || new Map();
+                const departmentWorks = [...new Set([...getDepartmentSubWorks(department), ...assignedCounts.keys()])];
+                const serviceGroupOpen = (currentStaffDirectoryFilter.type === 'department' && currentStaffDirectoryFilter.value === department) ||
+                    (currentStaffDirectoryFilter.type === 'service-work' && currentStaffDirectoryFilter.value.startsWith(`${department}|||`));
+                return `<details class="staff-service-subwork-group" ${serviceGroupOpen ? 'open' : ''}>
+                    <summary><div><i class="fa-solid fa-briefcase"></i><strong>${escapeDocumentText(department)}</strong></div><span>${staffCount} staff <i class="fa-solid fa-chevron-down"></i></span></summary>
+                    <div class="staff-service-subwork-list">${departmentWorks.map(role =>
+                        filterButton('service-work', `${department}|||${role}`, role, assignedCounts.get(role) || 0, 'fa-screwdriver-wrench')
+                    ).join('')}</div>
+                </details>`;
+            }).join('')
+        : '<span class="text-muted">Add staff to view service-wise sub-works.</span>';
+
+    const query = (document.getElementById('staff-directory-search')?.value || '').trim().toLowerCase();
+    const visibleStaff = staffList.filter(member => {
+        const department = member.department || member.role || 'Department not set';
+        const roles = normalizeStaffWorkRoles(member.workRoles);
+        const [serviceFilterDepartment, serviceFilterRole] = currentStaffDirectoryFilter.type === 'service-work'
+            ? currentStaffDirectoryFilter.value.split('|||')
+            : ['', ''];
+        const matchesFilter = currentStaffDirectoryFilter.type === 'all' ||
+            (currentStaffDirectoryFilter.type === 'department' && department === currentStaffDirectoryFilter.value) ||
+            (currentStaffDirectoryFilter.type === 'subwork' && roles.includes(currentStaffDirectoryFilter.value)) ||
+            (currentStaffDirectoryFilter.type === 'service-work' && department === serviceFilterDepartment && roles.includes(serviceFilterRole));
+        const searchText = [member.name, member.phone, member.address, department, ...roles].filter(Boolean).join(' ').toLowerCase();
+        return matchesFilter && (!query || searchText.includes(query));
+    });
+
+    if (currentStaffDirectoryFilter.type === 'all') {
+        activeFilter.classList.add('hidden');
+        activeFilter.innerHTML = '';
+    } else {
+        const activeFilterLabel = currentStaffDirectoryFilter.type === 'service-work'
+            ? currentStaffDirectoryFilter.value.split('|||').join(' → ')
+            : currentStaffDirectoryFilter.value;
+        activeFilter.classList.remove('hidden');
+        activeFilter.innerHTML = `<span>Showing: <strong>${escapeDocumentText(activeFilterLabel)}</strong> · ${visibleStaff.length} staff</span><button type="button" onclick="clearStaffDirectoryFilter()"><i class="fa-solid fa-xmark"></i> Clear filter</button>`;
+    }
+
+    if (visibleStaff.length === 0) {
+        groupsContainer.innerHTML = '<div class="events-empty-state"><i class="fa-solid fa-user-slash"></i><h3>No matching staff</h3><p>Clear the filter or try another search.</p></div>';
         return;
     }
 
-    appState.staff.forEach(member => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><strong>${member.name}</strong></td>
-            <td>${member.role}</td>
-            <td>
-                <button class="action-icon-btn danger" onclick="removeStaffMember('${member.id}')" title="Remove staff"><i class="fa-solid fa-trash-can"></i></button>
-            </td>
-        `;
-        tbody.appendChild(tr);
+    const groupedStaff = new Map();
+    visibleStaff.forEach(member => {
+        const department = member.department || member.role || 'Department not set';
+        if (!groupedStaff.has(department)) groupedStaff.set(department, []);
+        groupedStaff.get(department).push(member);
     });
+    groupsContainer.innerHTML = [...groupedStaff.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([department, members]) => `
+            <details class="staff-department-group" ${currentStaffDirectoryFilter.type !== 'all' || query ? 'open' : ''}>
+                <summary><div><i class="fa-solid fa-briefcase"></i><h3>${escapeDocumentText(department)}</h3></div><span>${members.length} ${members.length === 1 ? 'person' : 'people'} <i class="fa-solid fa-chevron-down"></i></span></summary>
+                <div class="staff-directory-cards">${members.sort((a, b) => String(a.name).localeCompare(String(b.name))).map(renderStaffDirectoryCard).join('')}</div>
+            </details>`).join('');
+}
+
+function setStaffDirectoryFilterFromButton(button) {
+    currentStaffDirectoryFilter = { type: button.dataset.filterType || 'all', value: button.dataset.filterValue || '' };
+    renderStaffConfigTable();
+}
+
+function clearStaffDirectoryFilter() {
+    currentStaffDirectoryFilter = { type: 'all', value: '' };
+    renderStaffConfigTable();
+}
+
+function renderStaffDirectoryCard(member) {
+    const safePhoto = getSafeStaffPhoto(member.photoData);
+    const workRoles = normalizeStaffWorkRoles(member.workRoles);
+    return `<article class="staff-directory-card">
+        <div class="staff-directory-card-main">
+            <button class="staff-directory-avatar" onclick="viewStaffProfile('${member.id}')" title="View full profile">
+                ${safePhoto ? `<img src="${safePhoto}" alt="${escapeDocumentText(member.name)}">` : '<i class="fa-solid fa-user"></i>'}
+            </button>
+            <div class="staff-directory-name"><h4>${escapeDocumentText(member.name || 'Unnamed Staff')}</h4>${member.selfCreated ? '<span>Self-created profile</span>' : '<span>Added by admin</span>'}</div>
+            <div class="staff-directory-detail"><span>Phone</span><strong>${escapeDocumentText(member.phone || 'Not added')}</strong></div>
+            <div class="staff-directory-detail address"><span>Address</span><strong>${escapeDocumentText(member.address || 'Not added')}</strong></div>
+        </div>
+        <div class="staff-directory-work">
+            <span>Assigned sub-works</span>
+            <div class="staff-work-role-tags">${workRoles.length ? workRoles.map(role => `<span>${escapeDocumentText(role)}</span>`).join('') : '<small class="text-muted">Not assigned yet</small>'}</div>
+        </div>
+        <div class="staff-directory-actions">
+            <button type="button" onclick="openStaffWorkRoles('${member.id}')"><i class="fa-solid fa-screwdriver-wrench"></i> Assign Works</button>
+            <button type="button" onclick="viewStaffProfile('${member.id}')"><i class="fa-solid fa-eye"></i> Full Details</button>
+            <button type="button" class="danger" onclick="removeStaffMember('${member.id}')"><i class="fa-solid fa-trash-can"></i> Remove</button>
+        </div>
+    </article>`;
+}
+
+function getSafeStaffPhoto(value) {
+    return /^data:image\/(jpeg|png|webp);base64,/i.test(value || '') ? value : '';
+}
+
+function updateStaffPhotoPreview(photoData) {
+    const image = document.getElementById('staff-photo-preview-img');
+    const preview = document.getElementById('staff-photo-preview');
+    const removeButton = document.getElementById('staff-photo-remove-btn');
+    const safePhoto = getSafeStaffPhoto(photoData);
+    if (!image || !preview || !removeButton) return;
+    image.src = safePhoto;
+    image.classList.toggle('hidden', !safePhoto);
+    preview.classList.toggle('has-photo', !!safePhoto);
+    removeButton.classList.toggle('hidden', !safePhoto);
+}
+
+function removeStaffProfilePhoto() {
+    pendingStaffProfilePhoto = '';
+    updateStaffPhotoPreview('');
+    document.getElementById('staff-photo-status').textContent = 'Photo removed. Save the profile to confirm.';
+}
+
+async function handleStaffProfilePhoto(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const status = document.getElementById('staff-photo-status');
+    if (!file.type.startsWith('image/')) {
+        status.textContent = 'Please select an image file.';
+        return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+        status.textContent = 'Photo is too large. Please choose a photo below 12 MB.';
+        return;
+    }
+
+    status.textContent = 'Preparing photo…';
+    try {
+        pendingStaffProfilePhoto = await resizeStaffProfilePhoto(file);
+        updateStaffPhotoPreview(pendingStaffProfilePhoto);
+        status.textContent = 'Photo ready. Tap Save Profile to upload it.';
+    } catch (error) {
+        console.error('Could not prepare staff photo', error);
+        status.textContent = 'Could not read this photo. Please choose another image.';
+    }
+}
+
+function resizeStaffProfilePhoto(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = reject;
+        reader.onload = () => {
+            const image = new Image();
+            image.onerror = reject;
+            image.onload = () => {
+                const maxSide = 360;
+                const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+                canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+                const context = canvas.getContext('2d');
+                context.fillStyle = '#ffffff';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                let quality = 0.82;
+                let result = canvas.toDataURL('image/jpeg', quality);
+                while (result.length > 140000 && quality > 0.42) {
+                    quality -= 0.1;
+                    result = canvas.toDataURL('image/jpeg', quality);
+                }
+                resolve(result);
+            };
+            image.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function viewStaffProfile(staffId) {
+    const member = appState.staff.find(staff => staff.id === staffId);
+    if (!member) return;
+    const safePhoto = getSafeStaffPhoto(member.photoData);
+    const createdDate = member.createdAt ? new Date(member.createdAt).toLocaleString('en-IN') : 'Not recorded';
+    const updatedDate = member.updatedAt ? new Date(member.updatedAt).toLocaleString('en-IN') : 'Not recorded';
+    const workRoles = normalizeStaffWorkRoles(member.workRoles);
+    document.getElementById('staff-details-modal-body').innerHTML = `
+        <div class="staff-details-profile">
+            <div class="staff-details-photo">${safePhoto ? `<img src="${safePhoto}" alt="${escapeDocumentText(member.name)} profile photo">` : '<i class="fa-solid fa-user"></i>'}</div>
+            <div class="staff-details-name"><h3>${escapeDocumentText(member.name)}</h3><span class="staff-department-badge">${escapeDocumentText(member.department || member.role || 'Department not set')}</span></div>
+        </div>
+        <div class="staff-details-grid">
+            <div><span>Phone Number</span><strong>${escapeDocumentText(member.phone || 'Not added')}</strong></div>
+            <div><span>Profile Type</span><strong>${member.selfCreated ? 'Staff self-created' : 'Added by admin'}</strong></div>
+            <div class="staff-details-address"><span>Address</span><strong>${escapeDocumentText(member.address || 'Not added')}</strong></div>
+            <div class="staff-details-address"><span>Work Skills / Sub-Works</span><div class="staff-work-role-tags details">${workRoles.length ? workRoles.map(role => `<span>${escapeDocumentText(role)}</span>`).join('') : '<strong>Not assigned yet</strong>'}</div></div>
+            <div><span>Created</span><strong>${escapeDocumentText(createdDate)}</strong></div>
+            <div><span>Last Updated</span><strong>${escapeDocumentText(updatedDate)}</strong></div>
+        </div>`;
+    openModal('staff-details-modal');
+}
+
+function openStaffWorkRoles(staffId) {
+    const member = appState.staff.find(staff => String(staff.id) === String(staffId));
+    if (!member) return;
+    document.getElementById('work-roles-staff-id').value = member.id;
+    document.getElementById('work-roles-staff-name').textContent = member.name;
+    const department = member.department || member.role || 'Department not set';
+    document.getElementById('work-roles-staff-department').textContent = department;
+    document.getElementById('staff-work-roles-input').value = normalizeStaffWorkRoles(member.workRoles).join('\n');
+    document.getElementById('common-work-role-title').textContent = `${department} sub-works`;
+    document.getElementById('common-work-role-buttons').innerHTML = getDepartmentSubWorks(department).map(role =>
+        `<button type="button" data-work-role="${escapeDocumentText(role)}" onclick="addCommonStaffWorkRoleFromButton(this)">${escapeDocumentText(role)}</button>`
+    ).join('');
+    openModal('staff-work-roles-modal');
+}
+
+function addCommonStaffWorkRoleFromButton(button) {
+    addCommonStaffWorkRole(button.dataset.workRole || '');
+}
+
+function addCommonStaffWorkRole(role) {
+    const input = document.getElementById('staff-work-roles-input');
+    const roles = normalizeStaffWorkRoles(`${input.value}\n${role}`);
+    input.value = roles.join('\n');
+}
+
+async function saveStaffWorkRoles() {
+    const staffId = document.getElementById('work-roles-staff-id').value;
+    const member = appState.staff.find(staff => String(staff.id) === String(staffId));
+    if (!member) return;
+    const roles = normalizeStaffWorkRoles(document.getElementById('staff-work-roles-input').value);
+    member.workRoles = roles;
+    member.workRolesUpdatedAt = new Date().toISOString();
+    member.updatedAt = member.workRolesUpdatedAt;
+    const saved = await saveState();
+    if (!saved) {
+        await loadState();
+        showToast('Work skills could not be saved. Please try again.');
+        renderStaffTab();
+        return;
+    }
+    closeModal('staff-work-roles-modal');
+    showToast(`Work skills saved for ${member.name}.`);
+    renderStaffTab();
 }
 
 function addStaffMember() {
@@ -2542,7 +5143,15 @@ function addStaffMember() {
     const newStaff = {
         id: 'stf_' + Date.now(),
         name,
-        role
+        role,
+        department: role,
+        phone: '',
+        address: '',
+        workRoles: [],
+        workRolesUpdatedAt: '',
+        selfCreated: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
     };
 
     appState.staff.push(newStaff);
@@ -2664,7 +5273,7 @@ function loadAttendanceLogs() {
     const dayRecords = appState.attendance.filter(a => a.date === filterDate);
 
     if (dayRecords.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">No attendance logged for this date.</td></tr>';
+        tbody.innerHTML = '<tr class="attendance-empty-row"><td colspan="5" class="text-center">No attendance logged for this date.</td></tr>';
         return;
     }
 
@@ -2680,11 +5289,11 @@ function loadAttendanceLogs() {
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td><strong>${name}</strong></td>
-            <td>${role}</td>
-            <td><span class="badge badge-paid">${log.checkInTime}</span></td>
-            <td>${log.checkOutTime ? `<span class="badge badge-billing">${log.checkOutTime}</span>` : `<span class="badge badge-inquiry">Active</span>`}</td>
-            <td><strong>${hrsHTML}</strong></td>
+            <td data-label="Staff Name"><strong>${escapeDocumentText(name)}</strong></td>
+            <td data-label="Department">${escapeDocumentText(role)}</td>
+            <td data-label="Check-In"><span class="badge badge-paid">${escapeDocumentText(log.checkInTime)}</span></td>
+            <td data-label="Check-Out">${log.checkOutTime ? `<span class="badge badge-billing">${escapeDocumentText(log.checkOutTime)}</span>` : `<span class="badge badge-inquiry">Active</span>`}</td>
+            <td data-label="Working Hours"><strong>${escapeDocumentText(hrsHTML)}</strong></td>
         `;
         tbody.appendChild(tr);
     });
@@ -2726,12 +5335,19 @@ function renderCustomersList() {
             customerMap[key] = {
                 name: evt.clientName,
                 phone: evt.clientPhone,
+                address: evt.address || '',
                 email: evt.clientEmail,
                 eventsCount: 0,
                 totalBilled: 0,
                 pendingBalance: 0,
                 history: []
             };
+        }
+
+        // Older inquiries may not have an address, while a later event for
+        // the same customer does. Keep the first available saved address.
+        if (!customerMap[key].address && evt.address) {
+            customerMap[key].address = evt.address;
         }
 
         customerMap[key].eventsCount += 1;
@@ -2747,7 +5363,7 @@ function renderCustomersList() {
     const customers = Object.values(customerMap);
 
     if (customers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No customers found. Customers are registered automatically when an inquiry is created.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center">No customers found. Customers are registered automatically when an inquiry is created.</td></tr>';
         return;
     }
 
@@ -2760,6 +5376,7 @@ function renderCustomersList() {
         tr.innerHTML = `
             <td><strong>${cust.name}</strong></td>
             <td>${cust.phone}</td>
+            <td>${escapeDocumentText(cust.address || 'Not added')}</td>
             <td>${cust.email || '-'}</td>
             <td class="text-center"><strong>${cust.eventsCount}</strong></td>
             <td>₹${cust.totalBilled.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -2956,7 +5573,10 @@ async function testWebhook() {
 // ==========================================
 
 async function exportDataBackup() {
-    await loadState();
+    if (!await loadState()) {
+        showToast('Shared data could not be loaded. Backup was not exported.');
+        return;
+    }
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 4));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
@@ -3000,24 +5620,49 @@ function importDataBackup(event) {
 // 11. DASHBOARD OVERVIEW & KANBAN MODULE
 // ==========================================
 
+function getDashboardFinancialSummary(events) {
+    // Keep amounts in paise so a rounding residue cannot keep a settled event
+    // on the dashboard. Completed records remain saved in the event history.
+    const toPaise = amount => Math.round((Number(amount) || 0) * 100);
+    const totals = { bookedEventValue: 0, advanceCollected: 0, amountReceived: 0, pendingPayments: 0 };
+
+    events.forEach(event => {
+        // Keep the event in the booked-value summary from confirmed booking
+        // through Event Execution. Moving to Pending Bill removes it here;
+        // the billing pipeline then becomes the source of truth.
+        const isBookedValueStage = event.status === 'advance-paid' || event.status === 'event-completed';
+        if (!isBookedValueStage) return;
+
+        const payments = event.payments || [];
+        const paid = payments.reduce((sum, payment) => sum + toPaise(payment.amount), 0);
+        const { grandTotal } = getEventInvoiceCalculations(event);
+        const pending = Math.max(0, toPaise(grandTotal) - paid);
+        totals.bookedEventValue += toPaise(grandTotal);
+        totals.advanceCollected += payments
+            .filter(payment => String(payment.method || '').toLowerCase().includes('advance'))
+            .reduce((sum, payment) => sum + toPaise(payment.amount), 0);
+        totals.amountReceived += paid; // Includes advance payments; do not add the two cards together.
+        totals.pendingPayments += pending;
+    });
+
+    return Object.fromEntries(Object.entries(totals).map(([key, amount]) => [key, amount / 100]));
+}
+
 function renderDashboard() {
     const totalInquiries = appState.events.length;
     const activeEvents = appState.events.filter(e => e.status !== 'delivered' && e.status !== 'enquiry').length;
     const completedEvents = appState.events.filter(e => e.status === 'delivered').length;
-    
-    let totalPendingPayments = 0;
-    appState.events.forEach(e => {
-        const calcs = getEventInvoiceCalculations(e);
-        totalPendingPayments += calcs.pendingBalance;
-    });
-
     const today = getTodayDateString();
+    const financials = getDashboardFinancialSummary(appState.events);
     const staffPresent = appState.attendance.filter(a => a.date === today).length;
 
     document.getElementById('stat-total-inquiries').textContent = totalInquiries;
     document.getElementById('stat-active-events').textContent = activeEvents;
+    document.getElementById('stat-booked-value').textContent = '₹' + financials.bookedEventValue.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    document.getElementById('stat-advance-collected').textContent = '₹' + financials.advanceCollected.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    document.getElementById('stat-current-received').textContent = '₹' + financials.amountReceived.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     document.getElementById('stat-completed-events').textContent = completedEvents;
-    document.getElementById('stat-pending-payments').textContent = '₹' + totalPendingPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    document.getElementById('stat-pending-payments').textContent = '₹' + financials.pendingPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     document.getElementById('stat-staff-present').textContent = staffPresent;
 
     const upcomingTbody = document.getElementById('upcoming-events-tbody');
@@ -3094,10 +5739,13 @@ function renderPipelineStage(stageKey) {
     }
 
     const isLastStage = getStageIndex(stageKey) === STAGE_DEFS.length - 1;
+    const isBookedStage = getStageIndex(stageKey) >= getStageIndex('advance-paid');
     const nextLabel = isLastStage ? '' : getStageLabel(STAGE_DEFS[getStageIndex(stageKey) + 1].key);
 
     stageEvents.forEach(evt => {
         const calcs = getEventInvoiceCalculations(evt);
+        const documentCount = Array.isArray(evt.documents) ? evt.documents.length : 0;
+        const financeCount = getEventFinanceEntries(evt.id).length;
 
         const card = document.createElement('div');
         card.className = 'kanban-card';
@@ -3112,6 +5760,14 @@ function renderPipelineStage(stageKey) {
                 <button onclick="event.stopPropagation(); startQuotationForEvent('${evt.id}')" title="Quotation"><i class="fa-solid fa-file-signature"></i></button>
                 <button onclick="event.stopPropagation(); startBillingForEvent('${evt.id}')" title="Invoicing"><i class="fa-solid fa-file-invoice-dollar"></i></button>
             </div>
+            ${stageKey === 'advance-paid' ? `
+            <button class="btn btn-block kanban-documents-btn no-print" onclick="event.stopPropagation(); openEventDocuments('${evt.id}')">
+                <i class="fa-solid fa-folder-open"></i> Documents${documentCount ? ` (${documentCount})` : ''}
+            </button>` : ''}
+            ${isBookedStage && currentAdminEmail ? `
+            <button class="btn btn-block kanban-expenses-btn no-print" onclick="event.stopPropagation(); openEventExpenses('${evt.id}')">
+                <i class="fa-solid fa-lock"></i> Admin Expenses${financeCount ? ` (${financeCount})` : ''}
+            </button>` : ''}
             ${!isLastStage ? `
             <button class="btn primary-btn btn-block approve-stage-btn no-print" onclick="event.stopPropagation(); advanceEventStage('${evt.id}')">
                 <i class="fa-solid fa-check"></i> Approve &rarr; ${nextLabel}

@@ -15,11 +15,13 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=19">
+    <link rel="stylesheet" href="style.css?v=51">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- jsPDF for downloadable event detail reports -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
     <!-- Supabase: real backend (auth + database) so accounts and data work across every device -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -37,12 +39,12 @@
             <img src="icons/icon-96.png" alt="DD Events" class="install-banner-icon">
             <div class="install-banner-text">
                 <strong>Install DD Events</strong>
-                <span>Add this app to your home screen for quick access.</span>
+                <span id="install-banner-message">Add this app to your home screen for quick access.</span>
             </div>
         </div>
         <div class="install-banner-actions">
             <button onclick="dismissInstallBanner()" class="btn text-btn">Not now</button>
-            <button onclick="triggerAppInstall()" class="btn primary-btn"><i class="fa-solid fa-download"></i> Install</button>
+            <button onclick="triggerAppInstall()" class="btn primary-btn" id="install-app-button"><i class="fa-solid fa-download"></i> Install</button>
         </div>
     </div>
 
@@ -53,6 +55,16 @@
 
             <div id="auth-loading-view" class="auth-loading">
                 <i class="fa-solid fa-circle-notch fa-spin"></i> Loading your dashboard...
+            </div>
+
+            <div id="dashboard-load-error-view" class="dashboard-load-error hidden" role="alert">
+                <div class="dashboard-load-error-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                <h2>Dashboard data could not be loaded</h2>
+                <p>Your existing data was not replaced or changed. Check your internet connection, then try again.</p>
+                <button type="button" class="btn primary-btn btn-block" onclick="retryDashboardLoad()">
+                    <i class="fa-solid fa-rotate-right"></i> Try Again
+                </button>
+                <button type="button" class="btn text-btn btn-block" onclick="logout()">Sign Out</button>
             </div>
 
             <div id="password-login-view" class="hidden">
@@ -125,12 +137,67 @@
                 <button onclick="staffLogout()" class="btn logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Exit</button>
             </div>
 
-            <div class="form-group">
-                <label for="worklog-staff-select">Your Name</label>
-                <select id="worklog-staff-select" class="form-control-large" onchange="onWorklogStaffChange()">
-                    <option value="">-- Select your name --</option>
-                </select>
-            </div>
+            <section id="staff-profile-panel" class="staff-profile-panel hidden">
+                <div class="staff-profile-intro">
+                    <div class="staff-profile-icon"><i class="fa-solid fa-id-card"></i></div>
+                    <div>
+                        <h3>Create Your Staff Profile</h3>
+                        <p class="stage-desc">Enter your details once. You will then receive and see work updates for your department.</p>
+                    </div>
+                </div>
+                <form id="staff-profile-form" onsubmit="event.preventDefault(); saveStaffProfile();">
+                    <input type="hidden" id="staff-profile-id">
+                    <div class="staff-photo-field">
+                        <div class="staff-photo-preview" id="staff-photo-preview">
+                            <i class="fa-solid fa-user"></i>
+                            <img id="staff-photo-preview-img" class="hidden" alt="Selected profile photo">
+                        </div>
+                        <div class="staff-photo-controls">
+                            <label>Profile Photo <span class="field-optional">(optional)</span></label>
+                            <p>Take a selfie or select a clear photo from your phone.</p>
+                            <div class="staff-photo-buttons">
+                                <button type="button" class="btn secondary-btn" onclick="document.getElementById('staff-selfie-input').click()"><i class="fa-solid fa-camera"></i> Take Selfie</button>
+                                <button type="button" class="btn secondary-btn" onclick="document.getElementById('staff-photo-input').click()"><i class="fa-solid fa-image"></i> Choose Photo</button>
+                                <button type="button" class="btn text-btn hidden" id="staff-photo-remove-btn" onclick="removeStaffProfilePhoto()"><i class="fa-solid fa-xmark"></i> Remove</button>
+                            </div>
+                            <input type="file" id="staff-selfie-input" class="visually-hidden" accept="image/*" capture="user" onchange="handleStaffProfilePhoto(event)">
+                            <input type="file" id="staff-photo-input" class="visually-hidden" accept="image/*" onchange="handleStaffProfilePhoto(event)">
+                            <small id="staff-photo-status" aria-live="polite"></small>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-profile-name">Full Name</label>
+                        <input type="text" id="staff-profile-name" placeholder="Enter your full name" autocomplete="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-profile-address">Address</label>
+                        <textarea id="staff-profile-address" rows="3" placeholder="Enter your address" autocomplete="street-address" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-profile-phone">Phone Number</label>
+                        <input type="tel" id="staff-profile-phone" placeholder="Enter your phone number" autocomplete="tel" inputmode="tel" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="staff-profile-department">Work Department</label>
+                        <select id="staff-profile-department" class="form-control-large" required>
+                            <option value="">-- Select your department --</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn primary-btn btn-block"><i class="fa-solid fa-floppy-disk"></i> Save Profile</button>
+                </form>
+            </section>
+
+            <div id="staff-portal-content" class="hidden">
+                <div class="staff-current-profile">
+                    <div class="staff-current-avatar" id="staff-current-avatar"><i class="fa-solid fa-user"></i></div>
+                    <div>
+                        <strong id="staff-current-name"></strong>
+                        <span id="staff-current-department" class="staff-department-badge"></span>
+                        <div id="staff-current-work-roles" class="staff-current-work-roles"></div>
+                    </div>
+                    <button type="button" class="btn secondary-btn" onclick="editStaffProfile()"><i class="fa-solid fa-pen"></i> Edit Profile</button>
+                </div>
+                <input type="hidden" id="worklog-staff-select">
 
             <div id="staff-notify-banner" class="staff-notify-banner hidden">
                 <span><i class="fa-solid fa-bell"></i> Get a notification on this phone when a new event is booked.</span>
@@ -140,7 +207,7 @@
 
             <h3><i class="fa-solid fa-calendar-check"></i> Booked Events - Apply to Work</h3>
             <p class="stage-desc">These events have their date booked (advance received). Apply to let admin know you're available - admin will approve who works on it, and you'll see the confirmation here.</p>
-            <div id="staff-available-events" class="pipeline-cards-grid" style="margin-bottom: 24px;">
+            <div id="staff-available-events" class="staff-work-lists" style="margin-bottom: 24px;">
                 <!-- Dynamic booked-event cards -->
             </div>
 
@@ -177,6 +244,7 @@
                     </tbody>
                 </table>
             </div>
+            </div>
         </div>
     </div>
 
@@ -206,7 +274,7 @@
                     <i class="fa-solid fa-hand-holding-dollar"></i> Advance Pay / Date Booked
                 </a>
                 <a href="#stage-event-completed" class="menu-item" onclick="switchTab('stage-event-completed')">
-                    <i class="fa-solid fa-calendar-check"></i> Event Completed
+                    <i class="fa-solid fa-calendar-check"></i> Event Execution
                 </a>
                 <a href="#stage-pending-bill" class="menu-item" onclick="switchTab('stage-pending-bill')">
                     <i class="fa-solid fa-hourglass-half"></i> Pending Bill
@@ -224,7 +292,10 @@
                     <i class="fa-solid fa-file-signature"></i> Quotations
                 </a>
                 <a href="#billing" class="menu-item" onclick="switchTab('billing')">
-                    <i class="fa-solid fa-file-invoice-dollar"></i> Billing & Invoices
+                    <i class="fa-solid fa-file-invoice-dollar"></i> Event Billing & Invoices
+                </a>
+                <a href="#sales-billing" class="menu-item" onclick="switchTab('sales-billing')">
+                    <i class="fa-solid fa-receipt"></i> Sales Billing
                 </a>
                 <a href="#staff" class="menu-item" onclick="switchTab('staff')">
                     <i class="fa-solid fa-users"></i> Staff Attendance
@@ -234,6 +305,9 @@
                 </a>
                 <a href="#event-approvals" class="menu-item" onclick="switchTab('event-approvals')">
                     <i class="fa-solid fa-user-check"></i> Event Staff Approvals
+                </a>
+                <a href="#event-staff-salary" class="menu-item" onclick="switchTab('event-staff-salary')">
+                    <i class="fa-solid fa-people-group"></i> Event Staff & Salary
                 </a>
                 <a href="#lead-bowls" class="menu-item" onclick="switchTab('lead-bowls')">
                     <i class="fa-solid fa-bowl-food"></i> Lead Bowls
@@ -259,6 +333,9 @@
                     <h1 id="current-tab-title">Dashboard</h1>
                 </div>
                 <div class="header-right">
+                    <button type="button" class="whatsapp-header-btn" onclick="openWhatsAppCenter()" title="Open WhatsApp Center" aria-label="Open WhatsApp Center">
+                        <i class="fa-brands fa-whatsapp"></i><span>WhatsApp</span>
+                    </button>
                     <!-- Notifications Dropdown Trigger -->
                     <div class="notification-bell" onclick="toggleNotificationDropdown()">
                         <i class="fa-solid fa-bell"></i>
@@ -279,8 +356,22 @@
 
             <!-- Dashboard Section -->
             <section id="tab-dashboard" class="tab-content active">
-                <!-- Stats Overview Grid -->
-                <div class="stats-grid">
+                <section class="dashboard-money-summary" aria-labelledby="money-summary-title">
+                    <div class="money-summary-header">
+                        <div><span class="money-summary-eyebrow">CURRENT BOOKINGS</span><h2 id="money-summary-title">Booked Events — Money Summary</h2></div>
+                        <p>Advance Pay / Date Booked through Event Execution stages.</p>
+                    </div>
+                    <div class="money-summary-grid">
+                        <article class="money-summary-card total-value"><div class="money-summary-icon"><i class="fa-solid fa-indian-rupee-sign"></i></div><div><span>Booked Event Value</span><strong id="stat-booked-value">₹0.00</strong><small>Total amount expected</small></div></article>
+                        <article class="money-summary-card advance-value"><div class="money-summary-icon"><i class="fa-solid fa-hand-holding-dollar"></i></div><div><span>Advance Received</span><strong id="stat-advance-collected">₹0.00</strong><small>Upfront payments received</small></div></article>
+                        <article class="money-summary-card received-value"><div class="money-summary-icon"><i class="fa-solid fa-wallet"></i></div><div><span>Received So Far</span><strong id="stat-current-received">₹0.00</strong><small>Advance already included</small></div></article>
+                        <article class="money-summary-card pending-value"><div class="money-summary-icon"><i class="fa-solid fa-hourglass-half"></i></div><div><span>Still To Receive</span><strong id="stat-pending-payments">₹0.00</strong><small>Remaining balance to collect</small></div></article>
+                    </div>
+                    <p class="money-summary-equation"><i class="fa-solid fa-circle-info"></i> <strong>Booked Event Value</strong> = Received So Far + Still To Receive. Advance is already included in Received So Far.</p>
+                </section>
+
+                <!-- Operational Stats Overview -->
+                <div class="stats-grid operational-stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon purple-bg"><i class="fa-solid fa-clipboard-list"></i></div>
                         <div class="stat-details">
@@ -293,13 +384,6 @@
                         <div class="stat-details">
                             <h3 id="stat-active-events">0</h3>
                             <p>Active Events</p>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon red-bg"><i class="fa-solid fa-money-bill-wave"></i></div>
-                        <div class="stat-details">
-                            <h3 id="stat-pending-payments">₹0.00</h3>
-                            <p>Pending Payments</p>
                         </div>
                     </div>
                     <div class="stat-card">
@@ -399,14 +483,14 @@
                 </div>
             </section>
 
-            <!-- Pipeline Stage Page: Event Completed -->
+            <!-- Pipeline Stage Page: Event Execution -->
             <section id="tab-stage-event-completed" class="tab-content">
                 <div class="dashboard-card">
                     <div class="card-header">
-                        <h2><i class="fa-solid fa-calendar-check"></i> Event Completed Stage</h2>
+                        <h2><i class="fa-solid fa-calendar-check"></i> Event Execution Stage</h2>
                         <span class="column-count" id="count-stage-event-completed">0</span>
                     </div>
-                    <p class="stage-desc">Event has been held. Approve to move the entry into billing for the pending balance.</p>
+                    <p class="stage-desc">Manage event work here. Once execution is finished, approve to move the entry into Pending Bill.</p>
                     <div class="pipeline-cards-grid" id="cards-stage-event-completed">
                         <!-- Dynamic cards -->
                     </div>
@@ -457,36 +541,31 @@
 
             <!-- Events & Inquiries Section -->
             <section id="tab-events" class="tab-content">
-                <div class="section-actions">
-                    <div class="search-bar">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="text" id="event-search" placeholder="Search customer, service..." oninput="filterEvents()">
+                <div class="events-page-intro">
+                    <div>
+                        <h2>Events by date</h2>
+                        <p>Select a stage to see only the records you need. Date headings stay visible while you scroll.</p>
                     </div>
                     <button class="btn primary-btn" onclick="openModal('add-event-modal')">
                         <i class="fa-solid fa-plus"></i> New Event / Inquiry
                     </button>
                 </div>
 
-                <div class="dashboard-card">
-                    <div class="table-responsive">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Event Date</th>
-                                    <th>Customer</th>
-                                    <th>Service Type</th>
-                                    <th>Total Amount</th>
-                                    <th>Workflow Stage</th>
-                                    <th>Output Status</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="events-list-tbody">
-                                <!-- Dynamic rows -->
-                            </tbody>
-                        </table>
+                <div class="event-stage-filters" id="event-stage-filters" aria-label="Filter events by workflow stage"></div>
+
+                <div class="events-toolbar">
+                    <div class="search-bar">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="event-search" placeholder="Search name, phone or service..." oninput="filterEvents()">
+                    </div>
+                    <div class="date-view-switch" aria-label="Group events by date">
+                        <span>Group by</span>
+                        <button class="date-view-btn active" data-date-view="event" onclick="setEventDateView('event')">Event date</button>
+                        <button class="date-view-btn" data-date-view="received" onclick="setEventDateView('received')">Enquiry received</button>
                     </div>
                 </div>
+
+                <div id="events-grouped-list" class="events-grouped-list"></div>
             </section>
 
             <!-- Quotation Tab -->
@@ -595,8 +674,14 @@
                                 </div>
 
                                 <!-- Bonus / Complimentary Items -->
-                                <div class="bonus-free-section">
-                                    <h3 class="bonus-free-heading">BONUS FREE</h3>
+                                <div class="no-print" id="q-bonus-add-trigger">
+                                    <button class="btn text-btn bonus-trigger-btn" onclick="addQuotationBonusItem()"><i class="fa-solid fa-gift"></i> Add Bonus / Free Items</button>
+                                </div>
+                                <div class="bonus-free-section hidden" id="q-bonus-section">
+                                    <div class="bonus-header-row">
+                                        <h3 class="bonus-free-heading">BONUS FREE</h3>
+                                        <button class="btn text-btn bonus-remove-all no-print" onclick="removeAllQuotationBonusItems()" title="Remove entire bonus section"><i class="fa-solid fa-trash"></i> Remove Bonus Box</button>
+                                    </div>
                                     <table class="invoice-items-table bonus-items-table">
                                         <tbody id="quotation-bonus-tbody">
                                             <!-- Bonus item rows -->
@@ -609,12 +694,6 @@
                                         <span>TOTAL</span>
                                         <span id="q-bonus-total">₹0.00</span>
                                     </div>
-                                </div>
-
-                                <div class="quote-note-section">
-                                    <strong class="quote-note-heading">Note</strong>
-                                    <p class="quote-note-blanks">Event Date....................... Delivery Date.......................</p>
-                                    <p class="quote-note-text">"We guarantee delivery of the complete photo and video output within 15 days from the event date, provided that the full payment is settled by the client within 2 days from the event date. If the agreed amount is not fully paid within the above period, the delivery guarantee will not be applicable and the delivery timeline may be extended until full payment completion."</p>
                                 </div>
 
                                 <div class="invoice-summary-section">
@@ -651,6 +730,9 @@
                 </div>
             </section>
 
+            <!-- Independent product sales; this never enters the event pipeline. -->
+            <section id="tab-sales-billing" class="tab-content"></section>
+
             <!-- Billing & Invoices Section -->
             <section id="tab-billing" class="tab-content">
                 <div class="billing-container">
@@ -686,6 +768,7 @@
                                     <button class="btn secondary-btn" onclick="downloadInvoiceJPEG()"><i class="fa-solid fa-file-image"></i> Download JPEG</button>
                                     <button class="btn secondary-btn" onclick="shareInvoiceJPEG()"><i class="fa-solid fa-share-nodes"></i> Share Image</button>
                                     <button class="btn secondary-btn" onclick="shareInvoiceWhatsApp()"><i class="fa-brands fa-whatsapp text-green"></i> Share WhatsApp</button>
+                                    <button class="btn secondary-btn" onclick="openCurrentInvoiceDocuments()"><i class="fa-solid fa-folder-open"></i> Documents</button>
                                     <button class="btn primary-btn" onclick="saveInvoiceChanges()"><i class="fa-solid fa-floppy-disk"></i> Save Invoice</button>
                                 </div>
                             </div>
@@ -749,6 +832,31 @@
 
                                 <div class="invoice-items-action no-print">
                                     <button class="btn text-btn" onclick="addInvoiceItem()"><i class="fa-solid fa-plus"></i> Add Item Line</button>
+                                </div>
+
+                                <!-- Bonus / Complimentary Items (carried over from Quotation) -->
+                                <div class="no-print" id="inv-bonus-add-trigger">
+                                    <button class="btn text-btn bonus-trigger-btn" onclick="addInvoiceBonusItem()"><i class="fa-solid fa-gift"></i> Add Bonus / Free Items</button>
+                                </div>
+                                <div class="bonus-free-section hidden" id="inv-bonus-section">
+                                    <div class="bonus-header-row">
+                                        <h3 class="bonus-free-heading">BONUS FREE</h3>
+                                        <button class="btn text-btn bonus-remove-all no-print" onclick="removeAllInvoiceBonusItems()" title="Remove entire bonus section"><i class="fa-solid fa-trash"></i> Remove Bonus Box</button>
+                                    </div>
+                                    <table class="invoice-items-table bonus-items-table">
+                                        <tbody id="invoice-bonus-tbody">
+                                            <!-- Bonus item rows -->
+                                        </tbody>
+                                    </table>
+                                    <div class="invoice-items-action no-print">
+                                        <button class="btn text-btn" onclick="addInvoiceBonusItem()"><i class="fa-solid fa-plus"></i> Add Bonus Item</button>
+                                    </div>
+                                </div>
+
+                                <div class="quote-note-section hidden" id="photography-delivery-note">
+                                    <strong class="quote-note-heading">Note</strong>
+                                    <p class="quote-note-blanks">Event Date....................... Delivery Date.......................</p>
+                                    <p class="quote-note-text">"We guarantee delivery of the complete photo and video output within 15 days from the event date, provided that the full payment is settled by the client within 2 days from the event date. If the agreed amount is not fully paid within the above period, the delivery guarantee will not be applicable and the delivery timeline may be extended until full payment completion."</p>
                                 </div>
 
                                 <div class="invoice-summary-section">
@@ -863,24 +971,29 @@
                             <form id="add-staff-form" class="form-compact" onsubmit="event.preventDefault(); addStaffMember();">
                                 <div class="form-row-two">
                                     <input type="text" id="new-staff-name" placeholder="Staff Name" required autocomplete="name">
-                                    <input type="text" id="new-staff-role" placeholder="Role (e.g. Photographer)" required>
+                                    <select id="new-staff-role" required><option value="">-- Select Department --</option></select>
                                 </div>
                                 <button type="submit" class="btn primary-btn"><i class="fa-solid fa-plus"></i> Add Staff</button>
                             </form>
 
-                            <div class="staff-list-display">
-                                <table class="simple-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th>Role</th>
-                                            <th>Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="staff-members-tbody">
-                                        <!-- Dynamic staff members -->
-                                    </tbody>
-                                </table>
+                            <div class="staff-directory-overview">
+                                <div class="staff-directory-heading">
+                                    <div><h3>Staff Directory</h3><p>View staff by department or assigned sub-work.</p></div>
+                                    <div class="search-bar staff-directory-search">
+                                        <i class="fa-solid fa-magnifying-glass"></i>
+                                        <input type="text" id="staff-directory-search" placeholder="Search name, phone, address or work..." oninput="renderStaffConfigTable()">
+                                    </div>
+                                </div>
+                                <div class="staff-count-section">
+                                    <span class="staff-count-section-label">Department / Role count</span>
+                                    <div id="staff-department-counts" class="staff-count-grid"></div>
+                                </div>
+                                <div class="staff-count-section">
+                                    <span class="staff-count-section-label">Service-wise sub-work assignment</span>
+                                    <div id="staff-subwork-counts" class="staff-service-subwork-groups"></div>
+                                </div>
+                                <div id="staff-directory-active-filter" class="staff-directory-active-filter hidden"></div>
+                                <div id="staff-members-groups" class="staff-members-groups"></div>
                             </div>
                         </div>
                     </div>
@@ -894,8 +1007,8 @@
                                     <input type="date" id="attendance-log-date" onchange="loadAttendanceLogs()">
                                 </div>
                             </div>
-                            <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                                <table>
+                            <div class="attendance-log-wrap">
+                                <table class="attendance-log-table">
                                     <thead>
                                         <tr>
                                             <th>Staff Name</th>
@@ -969,6 +1082,65 @@
                 </div>
             </section>
 
+            <!-- Admin-only event-wise staff attendance and salary ledger -->
+            <section id="tab-event-staff-salary" class="tab-content">
+                <div class="salary-page-intro">
+                    <div>
+                        <h2>Event Staff & Salary</h2>
+                        <p>Track who worked at each event, their work, agreed salary, amount paid and remaining balance.</p>
+                    </div>
+                </div>
+
+                <div class="salary-summary-grid">
+                    <div class="salary-summary-card"><span>Events Tracked</span><strong id="salary-stat-events">0</strong></div>
+                    <div class="salary-summary-card attendance"><span>Staff Attended</span><strong id="salary-stat-attended">0</strong></div>
+                    <div class="salary-summary-card total"><span>Total Salary</span><strong id="salary-stat-total">₹0</strong></div>
+                    <div class="salary-summary-card paid"><span>Amount Paid</span><strong id="salary-stat-paid">₹0</strong></div>
+                    <div class="salary-summary-card balance"><span>Balance Due</span><strong id="salary-stat-balance">₹0</strong></div>
+                </div>
+
+                <div class="dashboard-card salary-add-card">
+                    <div class="card-header"><h2><i class="fa-solid fa-user-plus"></i> Add Staff to an Event</h2></div>
+                    <form id="event-staff-assignment-form" onsubmit="event.preventDefault(); addEventStaffAssignment();">
+                        <div class="salary-add-grid">
+                            <div class="form-group">
+                                <label for="salary-event-select">Event</label>
+                                <select id="salary-event-select" required><option value="">-- Select Event --</option></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="salary-staff-select">Staff</label>
+                                <select id="salary-staff-select" onchange="loadStaffWorkRoleSuggestions(true)" required><option value="">-- Select Staff --</option></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="salary-work-type">Work / Department</label>
+                                <input type="text" id="salary-work-type" list="salary-work-role-options" placeholder="e.g. Electrician" required>
+                                <datalist id="salary-work-role-options"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label for="salary-agreed-amount">Agreed Salary (₹)</label>
+                                <input type="number" id="salary-agreed-amount" min="0" step="1" value="0" required>
+                            </div>
+                            <button type="submit" class="btn primary-btn"><i class="fa-solid fa-plus"></i> Add to Event</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="salary-toolbar">
+                    <div class="search-bar">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="event-salary-search" placeholder="Search event, date, staff or work..." oninput="renderEventStaffSalary()">
+                    </div>
+                    <select id="event-salary-attendance-filter" onchange="renderEventStaffSalary()" aria-label="Filter by attendance">
+                        <option value="all">All attendance</option>
+                        <option value="expected">Not marked yet</option>
+                        <option value="attended">Came to work</option>
+                        <option value="absent">Did not come</option>
+                    </select>
+                </div>
+
+                <div id="event-staff-salary-groups" class="event-salary-groups"></div>
+            </section>
+
             <!-- Lead Bowls - one "bowl" per muhurtham (auspicious wedding) date. Booked
                  events (advance paid+) auto-collect into the bowl matching their event
                  date - nothing to do manually beyond booking the event. -->
@@ -983,7 +1155,7 @@
             <section id="tab-customers" class="tab-content">
                 <div class="search-bar" style="margin-bottom: 20px;">
                     <i class="fa-solid fa-magnifying-glass"></i>
-                    <input type="text" id="customer-search" placeholder="Search customers by name, phone..." oninput="filterCustomers()">
+                    <input type="text" id="customer-search" placeholder="Search customers by name, phone, address..." oninput="filterCustomers()">
                 </div>
                 <div class="dashboard-card">
                     <div class="table-responsive">
@@ -992,6 +1164,7 @@
                                 <tr>
                                     <th>Customer Name</th>
                                     <th>Contact</th>
+                                    <th>Address</th>
                                     <th>Email</th>
                                     <th>Total Events</th>
                                     <th>Total Billed</th>
@@ -1292,7 +1465,150 @@
         </div>
     </div>
 
+    <!-- Modal: WhatsApp Center -->
+    <div id="whatsapp-center-modal" class="modal-overlay hidden">
+        <div class="modal-card whatsapp-center-modal-card">
+            <div class="modal-header">
+                <h2><i class="fa-brands fa-whatsapp"></i> WhatsApp Center</h2>
+                <button onclick="closeModal('whatsapp-center-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="whatsapp-center-intro">
+                    <strong>Send directly to each customer</strong>
+                    <p>Share documents, welcome customers after booking, and send thank-you messages after the event or full payment.</p>
+                </div>
+                <div class="search-bar whatsapp-center-search">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input id="whatsapp-center-search" type="search" aria-label="Search customers" placeholder="Search customer, phone, or service..." oninput="renderWhatsAppCenter()">
+                </div>
+                <div id="whatsapp-center-list" class="whatsapp-center-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Admin Staff Profile View -->
+    <div id="staff-details-modal" class="modal-overlay hidden">
+        <div class="modal-card staff-details-modal-card">
+            <div class="modal-header">
+                <h2>Staff Profile Details</h2>
+                <button onclick="closeModal('staff-details-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body" id="staff-details-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Modal: Admin assigns permanent work skills/sub-works to a staff member -->
+    <div id="staff-work-roles-modal" class="modal-overlay hidden">
+        <div class="modal-card staff-work-roles-modal-card">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-screwdriver-wrench"></i> Assign Work Skills</h2>
+                <button onclick="closeModal('staff-work-roles-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="work-roles-staff-id">
+                <div class="work-roles-person-summary">
+                    <strong id="work-roles-staff-name"></strong>
+                    <span id="work-roles-staff-department" class="staff-department-badge"></span>
+                </div>
+                <div class="form-group">
+                    <label for="staff-work-roles-input">Work Skills / Sub-Works</label>
+                    <textarea id="staff-work-roles-input" rows="5" placeholder="Electrician, Florist, Loader&#10;Enter each work separated by comma or new line."></textarea>
+                    <small class="text-muted">You can enter any work name. Separate multiple works using a comma or new line.</small>
+                </div>
+                <div class="common-work-role-section">
+                    <span id="common-work-role-title">Quick add department sub-works</span>
+                    <div id="common-work-role-buttons" class="common-work-role-buttons"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary-btn" onclick="closeModal('staff-work-roles-modal')">Cancel</button>
+                    <button type="button" class="btn primary-btn" onclick="saveStaffWorkRoles()"><i class="fa-solid fa-floppy-disk"></i> Save Work Skills</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: booked event notes, files and full PDF report -->
+    <div id="event-documents-modal" class="modal-overlay hidden">
+        <div class="modal-card event-documents-modal-card">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-folder-open"></i> Event Documents</h2>
+                <button onclick="closeModal('event-documents-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="event-documents-event-id">
+                <div class="event-document-service-picker">
+                    <label for="event-document-service-select">Select Quotation Service</label>
+                    <select id="event-document-service-select" onchange="changeEventDocumentService()">
+                        <option value="">-- Choose a service --</option>
+                    </select>
+                    <small>Notes, uploads and the PDF below will belong only to this selected service.</small>
+                </div>
+                <div id="event-documents-summary" class="event-documents-summary"></div>
+                <div class="form-group event-document-notes-field">
+                    <label for="event-document-notes">Selected Service Notes</label>
+                    <textarea id="event-document-notes" rows="4" maxlength="5000" placeholder="Instructions, requirements, setup notes and timings for the selected service..."></textarea>
+                    <button type="button" class="btn secondary-btn" onclick="saveEventDocumentNotes()"><i class="fa-solid fa-floppy-disk"></i> Save Notes</button>
+                </div>
+                <div class="event-document-upload-box">
+                    <div>
+                        <strong><i class="fa-solid fa-cloud-arrow-up"></i> Upload Selected Service Images or PDF</strong>
+                        <small>JPG, PNG, WEBP or PDF. Maximum 5 MB per file; up to 12 files per service.</small>
+                    </div>
+                    <input type="file" id="event-document-files" accept="image/jpeg,image/png,image/webp,application/pdf" multiple>
+                    <button type="button" class="btn primary-btn" id="event-document-upload-btn" onclick="uploadEventDocuments()"><i class="fa-solid fa-upload"></i> Upload Files</button>
+                </div>
+                <div id="event-document-upload-status" class="event-document-upload-status hidden"></div>
+                <div class="event-document-list-heading"><h3>Selected Service Files</h3><span id="event-document-count">0 files</span></div>
+                <div id="event-document-list" class="event-document-list"></div>
+                <div class="modal-footer event-documents-footer">
+                    <button type="button" class="btn secondary-btn" onclick="closeModal('event-documents-modal')">Close</button>
+                    <button type="button" class="btn primary-btn" id="event-document-pdf-btn" onclick="downloadEventDetailsPdf()"><i class="fa-solid fa-file-pdf"></i> Download Service PDF</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: admin-only event expenses, investment and profit tracking -->
+    <div id="event-expenses-modal" class="modal-overlay hidden">
+        <div class="modal-card event-expenses-modal-card">
+            <div class="modal-header event-expenses-modal-header">
+                <h2><i class="fa-solid fa-wallet"></i> Admin Expenses &amp; Investment</h2>
+                <button onclick="closeModal('event-expenses-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="event-finance-private-note"><i class="fa-solid fa-lock"></i><span><strong>Admin only:</strong> These details will never be added to client quotations, invoices, shared images, WhatsApp messages or service PDFs.</span></div>
+                <div id="event-finance-summary" class="event-finance-summary"></div>
+
+                <form id="event-finance-entry-form" class="event-finance-entry-form" onsubmit="addEventFinanceEntry(event)">
+                    <label><span>Quotation Service</span><select id="event-finance-service" required></select></label>
+                    <label><span>Entry Type</span><select id="event-finance-type" required><option value="expense">Expense</option><option value="investment">Investment</option></select></label>
+                    <label><span>Category</span><select id="event-finance-category" required><option>Labor</option><option>Materials</option><option>Transport</option><option>Vendor Payment</option><option>Equipment / Rental</option><option>Food / Catering</option><option>Other</option></select></label>
+                    <label><span>Amount (₹)</span><input id="event-finance-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required></label>
+                    <label class="event-finance-notes"><span>Notes</span><textarea id="event-finance-notes" rows="2" maxlength="1000" placeholder="What was this amount used for?"></textarea></label>
+                    <button id="event-finance-add-btn" type="submit" class="btn primary-btn"><i class="fa-solid fa-plus"></i> Add Entry</button>
+                </form>
+
+                <div class="event-finance-list-heading"><h3>Service-wise Entries</h3><span id="event-finance-entry-count">0 entries</span></div>
+                <div id="event-finance-entry-list" class="event-finance-entry-list"></div>
+                <div class="modal-footer"><button type="button" class="btn secondary-btn" onclick="closeModal('event-expenses-modal')">Close</button></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: browser-specific PWA install instructions -->
+    <div id="install-help-modal" class="modal-overlay hidden">
+        <div class="modal-card install-help-modal-card">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-mobile-screen-button"></i> Install DD Events</h2>
+                <button onclick="closeModal('install-help-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body" id="install-help-content"></div>
+        </div>
+    </div>
+
     <!-- Script Import -->
-    <script src="app.js?v=25"></script>
+    <script src="document-pricing.js?v=2"></script>
+    <script src="app.js?v=64"></script>
+    <script src="sales-billing.js?v=1"></script>
 </body>
 </html>
