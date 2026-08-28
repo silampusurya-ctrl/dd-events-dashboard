@@ -308,9 +308,11 @@ function setupRefreshOnResume() {
 
         const isStaffAuthenticated = localStorage.getItem('dd_staff_authenticated') === 'true';
         if (isStaffAuthenticated) {
+            const previousDecisions = getMyApplicationDecisions();
             if (await loadState()) {
                 renderMyWorkLogs();
                 renderAvailableEventsForStaff();
+                announceApplicationDecisions(previousDecisions);
             } else {
                 showToast('Could not refresh shared data. Your current view was kept.');
             }
@@ -1079,6 +1081,74 @@ function startDashboardAutoSync() {
     dashboardAutoSyncTimer = setInterval(syncAdminDashboardChanges, 5000);
 }
 
+// The staff portal had no equivalent of the admin auto-sync above: an approval
+// or rejection only appeared after the staff member switched away from the app
+// and back (the visibilitychange handler). Anyone watching the screen waiting
+// for a decision just kept seeing "Pending Admin Approval", and newly booked
+// work never showed up on its own either.
+async function syncStaffPortalChanges() {
+    if (document.visibilityState !== 'visible') return;
+    // Don't clobber an application that is still being written.
+    if (_saveInFlight || Date.now() - _lastSaveAt < 4000) return;
+
+    const { data, error } = await staffSb
+        .from('dashboard_data')
+        .select('data, updated_at')
+        .eq('id', 1)
+        .single();
+    if (error || !data || !data.data || typeof data.data !== 'object') return;
+    if (data.updated_at === lastSeenDashboardUpdateAt) return;
+
+    const previousDecisions = getMyApplicationDecisions();
+    applyLoadedState(data.data);
+    lastSeenDashboardUpdateAt = data.updated_at || '';
+
+    // Only repaint the portal itself; the profile form is a separate view and
+    // must not be reset out from under someone who is typing in it.
+    if (!document.getElementById('staff-portal-content')?.classList.contains('hidden')) {
+        renderMyWorkLogs();
+        renderAvailableEventsForStaff();
+        announceApplicationDecisions(previousDecisions);
+    }
+}
+
+// Push alerts don't reach every staff phone (permission denied, an iPhone that
+// never got added to the home screen, a dead subscription). An in-app message
+// on the decision means they still find out while the app is open.
+function getMyApplicationDecisions() {
+    const profile = getCurrentStaffProfile();
+    const decisions = new Map();
+    if (!profile) return decisions;
+    (appState.staffApplications || []).forEach(application => {
+        const event = appState.events.find(evt => String(evt.id || '') === String(application.eventId || ''));
+        if (!event) return;
+        if (getStaffApplicationForEvent(event, profile) === application) {
+            decisions.set(String(application.eventId), application.status || 'pending');
+        }
+    });
+    return decisions;
+}
+
+function announceApplicationDecisions(previousDecisions) {
+    if (!previousDecisions || previousDecisions.size === 0) return;
+    const current = getMyApplicationDecisions();
+    for (const [eventId, status] of current) {
+        const before = previousDecisions.get(eventId);
+        if (!before || before === status || status === 'pending') continue;
+        const event = appState.events.find(evt => String(evt.id || '') === String(eventId));
+        const when = event ? formatDisplayDate(event.eventDate) : 'your event';
+        showToast(status === 'approved'
+            ? `Approved! You can come to work on ${when}.`
+            : `Your application for ${when} was not selected.`);
+        break;
+    }
+}
+
+function startStaffAutoSync() {
+    stopDashboardAutoSync();
+    dashboardAutoSyncTimer = setInterval(syncStaffPortalChanges, 10000);
+}
+
 // Sample/approximate dates spanning traditional Tamil wedding-season months
 // (Thai, Panguni/Chithirai, Aani, Karthigai) - these are NOT sourced from a
 // real panchangam/astrologer, just illustrative placeholders. Admins should
@@ -1137,7 +1207,10 @@ function choosePersistentStaffApplication(first, second) {
     if (!first) return cloneDocumentData(second);
     if (!second) return cloneDocumentData(first);
 
-    const statusRank = { pending: 1, rejected: 2, approved: 3 };
+    // Only "decided vs not yet decided" is ranked. Ranking approved above
+    // rejected made an approval resurface whenever a later rejection was
+    // merged against it, silently undoing the newer decision.
+    const statusRank = { pending: 1, rejected: 2, approved: 2 };
     const firstRank = statusRank[first.status] || 0;
     const secondRank = statusRank[second.status] || 0;
     let preferred = first;
@@ -1382,6 +1455,7 @@ async function startStaffPortal() {
     } else {
         showStaffProfilePanel();
     }
+    startStaffAutoSync();
     return true;
 }
 
@@ -1543,14 +1617,18 @@ async function updateExistingStaffSubscription(profile) {
         const subscription = await registration.pushManager.getSubscription();
         if (!subscription) return;
         const subJson = subscription.toJSON();
-        await staffSb.from('push_subscriptions').upsert({
+        // supabase-js resolves with { error } instead of throwing, so an
+        // unchecked upsert leaves the device looking subscribed while the
+        // server has no row to push to.
+        const { error } = await staffSb.from('push_subscriptions').upsert({
             endpoint: subJson.endpoint,
             keys: subJson.keys,
             subscriber_name: profile.name,
             subscriber_role: 'staff',
-            subscriber_department: profile.department || profile.role || '',
+            subscriber_department: resolveStaffDepartment(profile),
             staff_profile_id: profile.id
         }, { onConflict: 'endpoint' });
+        if (error) console.error('Could not update staff notification profile', error);
     } catch (err) {
         console.error('Could not update staff notification profile', err);
     }
@@ -1592,18 +1670,62 @@ async function refreshStaffNotifyUI() {
     const registration = await navigator.serviceWorker.ready;
     const existingSub = await registration.pushManager.getSubscription();
 
-    if (existingSub) {
-        hideView('staff-notify-banner');
-        statusEl.textContent = 'Notifications are ON - you\'ll be alerted here when a new event is booked.';
-    } else {
+    if (!existingSub) {
         showView('staff-notify-banner');
         statusEl.textContent = '';
+        return;
+    }
+
+    // A browser subscription on its own proves nothing: the matching row can be
+    // missing because the profile was created after permission was granted, or
+    // because the Edge Function pruned it as dead. Claiming "ON" in that state
+    // hides the Enable button for good and no alert ever arrives, so check the
+    // server and offer to re-enable when the registration is gone.
+    const registered = await isStaffPushRegistered(existingSub);
+    if (registered === false) {
+        showView('staff-notify-banner');
+        statusEl.textContent = 'This device is no longer registered for alerts - tap Enable Notifications to fix it.';
+        return;
+    }
+
+    hideView('staff-notify-banner');
+    statusEl.textContent = 'Notifications are ON - you\'ll be alerted here when a new event is booked.';
+}
+
+// true = registered, false = definitely missing, null = could not tell (offline
+// or the query failed), in which case the caller leaves the current state alone.
+async function isStaffPushRegistered(subscription) {
+    try {
+        const endpoint = subscription.toJSON().endpoint;
+        const { data, error } = await staffSb
+            .from('push_subscriptions')
+            .select('endpoint')
+            .eq('endpoint', endpoint)
+            .maybeSingle();
+        if (error) {
+            console.error('Could not verify push registration', error);
+            return null;
+        }
+        return !!data;
+    } catch (err) {
+        console.error('Could not verify push registration', err);
+        return null;
     }
 }
 
 async function enableStaffNotifications() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
         showToast('Push notifications are not supported on this browser.');
+        return;
+    }
+
+    // Check the profile before touching the browser subscription. Subscribing
+    // first and bailing out here left the device holding a push subscription
+    // with no server row: the banner then read as already enabled, so it could
+    // never be turned on again and no alert ever arrived.
+    const profile = getCurrentStaffProfile();
+    if (!profile) {
+        showToast('Please create your staff profile before enabling notifications.');
         return;
     }
 
@@ -1625,20 +1747,23 @@ async function enableStaffNotifications() {
         }
 
         const subJson = subscription.toJSON();
-        const profile = getCurrentStaffProfile();
-        if (!profile) {
-            showToast('Please create your staff profile before enabling notifications.');
-            return;
-        }
 
-        await staffSb.from('push_subscriptions').upsert({
+        const { error } = await staffSb.from('push_subscriptions').upsert({
             endpoint: subJson.endpoint,
             keys: subJson.keys,
             subscriber_name: profile.name,
             subscriber_role: 'staff',
-            subscriber_department: profile.department || profile.role || '',
+            subscriber_department: resolveStaffDepartment(profile),
             staff_profile_id: profile.id
         }, { onConflict: 'endpoint' });
+        // Reporting success on a failed write is what made this look enabled
+        // while the server had nothing to send to.
+        if (error) {
+            console.error('Could not register this device for staff notifications', error);
+            showToast('Could not register this device for alerts. Please try again.');
+            refreshStaffNotifyUI();
+            return;
+        }
 
         showToast('Notifications enabled! You\'ll be alerted when a new event is booked.');
         refreshStaffNotifyUI();
@@ -1705,12 +1830,23 @@ async function enableAdminNotifications() {
 
         const subJson = subscription.toJSON();
 
-        await sb.from('push_subscriptions').upsert({
+        // Clear the staff-only columns explicitly: an upsert only overwrites the
+        // columns it names, so a device that was signed in as staff earlier would
+        // keep its old department/profile id and stay matched by staff targeting.
+        const { error: adminSubError } = await sb.from('push_subscriptions').upsert({
             endpoint: subJson.endpoint,
             keys: subJson.keys,
             subscriber_name: currentAdminEmail || '',
-            subscriber_role: 'admin'
+            subscriber_role: 'admin',
+            subscriber_department: null,
+            staff_profile_id: null
         }, { onConflict: 'endpoint' });
+        if (adminSubError) {
+            console.error('Could not register this device for admin notifications', adminSubError);
+            showToast('Could not register this device for alerts. Please try again.');
+            refreshAdminNotifyUI();
+            return;
+        }
 
         showToast('Notifications enabled! You\'ll be alerted for bookings, requests, and approvals.');
         refreshAdminNotifyUI();
@@ -1724,23 +1860,55 @@ async function enableAdminNotifications() {
 // admin, since booking/request/approval updates all matter to both sides.
 async function sendPushBroadcast(title, body, targeting = {}) {
     try {
-        await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
+        // Edge Functions reject calls without a bearer token when JWT
+        // verification is left on (the Supabase default), so send the anon key
+        // as Authorization too - not just as `apikey`. Without this the
+        // request comes back 401 and every notification is dropped silently.
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
             },
             body: JSON.stringify({ title, body, url: './', ...targeting })
         });
+
+        // fetch() only rejects on network failure, so a 401/500 from the
+        // function would otherwise look like a successful send.
+        if (!response.ok) {
+            console.error('Push notification request failed', response.status, await response.text().catch(() => ''));
+            return false;
+        }
+        const result = await response.json().catch(() => null);
+        if (result && result.sent === 0) {
+            console.warn('Push notification reached no devices', { title, targeting, result });
+        }
+        return true;
     } catch (err) {
         console.error('Failed to send push notification', err);
+        return false;
     }
 }
 
 async function notifyStaffOfBookedEvent(evt) {
     if (!isUpcomingStaffWorkEvent(evt)) return;
     const departments = getEventDepartments(evt);
-    if (departments.length === 0) return;
+
+    // A booking is often confirmed before its quotation lines are filled in,
+    // and some service names match no department keyword at all. Bailing out
+    // here used to drop the alert entirely, and nothing ever re-sent it. Tell
+    // every staff device instead - the portal still filters what each of them
+    // can actually apply to.
+    if (departments.length === 0) {
+        await sendPushBroadcast(
+            'New Booked Event',
+            `Date: ${formatDisplayDate(evt.eventDate)}\nLocation: ${evt.venue || 'Not set'}\nOpen the app to check if this is your department work.`,
+            { audienceRole: 'staff' }
+        );
+        return;
+    }
+
     await Promise.all(departments.map(department => sendPushBroadcast(
         'New Department Work',
         `Date: ${formatDisplayDate(evt.eventDate)}\nLocation: ${evt.venue || 'Not set'}\nDepartment: ${department}`,
@@ -1917,9 +2085,40 @@ function getEventDepartments(evt) {
     });
 }
 
+// Older builds let a free-text role be saved where a department belongs, so
+// live profiles hold values like "Decoration Supervisor" (a sub-work) or
+// "General Event Work" (an ad-hoc label). Neither matches any department, which
+// left those staff with a permanently empty portal and no push alerts. Map back
+// to a real department where we can, and report the rest as unclassified.
+function resolveStaffDepartment(profile) {
+    const raw = String((profile && (profile.department || profile.role)) || '').trim();
+    if (!raw) return '';
+    const key = raw.toLowerCase();
+
+    const exact = staffDepartments.find(department => department.toLowerCase() === key);
+    if (exact) return exact;
+
+    const bySubWork = Object.keys(staffSubWorksByDepartment).find(department =>
+        (staffSubWorksByDepartment[department] || []).some(work => String(work).trim().toLowerCase() === key)
+    );
+    return bySubWork || '';
+}
+
 function eventMatchesStaffDepartment(evt, profile) {
-    const department = profile && (profile.department || profile.role);
-    return !!department && getEventDepartments(evt).includes(department);
+    const eventDepartments = getEventDepartments(evt);
+
+    // A booking whose services match no department - usually one confirmed
+    // before its quotation lines were filled in - belonged to nobody, so it was
+    // invisible to every staff member including the ones the booking alert had
+    // just gone out to. Show it to all of them instead.
+    if (eventDepartments.length === 0) return true;
+
+    // Same for a profile we cannot classify: showing every booked job beats a
+    // dead-end portal, and the admin still decides who is actually approved.
+    const department = resolveStaffDepartment(profile);
+    if (!department) return true;
+
+    return eventDepartments.includes(department);
 }
 
 function getStaffApplicationForEvent(evt, profile) {
@@ -2041,7 +2240,16 @@ async function applyForEventWork(eventId) {
     localStorage.setItem('dd_staff_applicant_name', staffName);
 
     const event = appState.events.find(evt => String(evt.id || '') === String(eventId || ''));
-    const alreadyApplied = event ? getStaffApplicationForEvent(event, profile) : null;
+    // Without this the app would file an application against a deleted or
+    // not-yet-synced event, which then sits in the admin table forever as
+    // "Event deleted" and can never be acted on.
+    if (!event) {
+        showToast('This work is no longer available. Please refresh and try again.');
+        renderAvailableEventsForStaff();
+        return;
+    }
+
+    const alreadyApplied = getStaffApplicationForEvent(event, profile);
     if (alreadyApplied) {
         showToast('You have already applied for this event.');
         renderAvailableEventsForStaff();
@@ -2071,8 +2279,7 @@ async function applyForEventWork(eventId) {
     showToast('Application submitted! Waiting for admin approval.');
     renderAvailableEventsForStaff();
 
-    const evt = appState.events.find(e => e.id === eventId);
-    if (evt) notifyAdminOfWorkRequest(evt, staffName);
+    notifyAdminOfWorkRequest(event, staffName);
 }
 
 // Admin-side: every staff application across every event, newest first.
@@ -2080,7 +2287,8 @@ function renderEventApprovals() {
     const tbody = document.getElementById('event-approvals-tbody');
     if (!tbody) return;
 
-    const apps = [...appState.staffApplications].sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt));
+    const appliedTime = application => new Date(application?.appliedAt || 0).getTime() || 0;
+    const apps = [...(appState.staffApplications || [])].sort((a, b) => appliedTime(b) - appliedTime(a));
 
     if (apps.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="text-center">No staff applications yet.</td></tr>';
@@ -2088,37 +2296,49 @@ function renderEventApprovals() {
     }
 
     tbody.innerHTML = apps.map(app => {
-        const evt = appState.events.find(e => e.id === app.eventId);
+        const evt = appState.events.find(e => String(e.id || '') === String(app.eventId || ''));
         const eventLabel = evt
-            ? `<strong>${evt.clientName}</strong><br><small class="text-muted">${formatDisplayDate(evt.eventDate)} - ${evt.venue || '-'}</small>`
+            ? `<strong>${escapeDocumentText(evt.clientName)}</strong><br><small class="text-muted">${formatDisplayDate(evt.eventDate)} - ${escapeDocumentText(evt.venue || '-')}</small>`
             : '<span class="text-muted">Event deleted</span>';
-        const service = evt ? evt.serviceType : '-';
+        const service = evt ? escapeDocumentText(evt.serviceType || '-') : '-';
 
         let statusBadge;
         let actions;
+        // A decision used to be final: the buttons became a dash, so a mistaken
+        // approval or rejection could never be corrected from the app. Offer the
+        // opposite decision instead - the merge keeps whichever was decided last.
         if (app.status === 'approved') {
             statusBadge = '<span class="badge badge-completed-bill">Approved</span>';
-            actions = '<span class="text-muted" style="font-size: 0.8rem;">-</span>';
+            actions = `
+                <button class="action-icon-btn danger" title="Change to Rejected" onclick="decideStaffApplication('${escapeDocumentText(app.id)}', 'rejected')"><i class="fa-solid fa-rotate-left"></i></button>
+            `;
         } else if (app.status === 'rejected') {
             statusBadge = '<span class="badge" style="background: rgba(231,76,60,0.15); color: var(--color-danger);">Rejected</span>';
-            actions = '<span class="text-muted" style="font-size: 0.8rem;">-</span>';
+            actions = `
+                <button class="action-icon-btn" title="Change to Approved" onclick="decideStaffApplication('${escapeDocumentText(app.id)}', 'approved')"><i class="fa-solid fa-rotate-left text-green"></i></button>
+            `;
         } else {
             statusBadge = '<span class="badge badge-pending-bill">Pending</span>';
             actions = `
                 <div style="display:flex; gap:5px;">
-                    <button class="action-icon-btn" title="Approve" onclick="decideStaffApplication('${app.id}', 'approved')"><i class="fa-solid fa-check text-green"></i></button>
-                    <button class="action-icon-btn danger" title="Reject" onclick="decideStaffApplication('${app.id}', 'rejected')"><i class="fa-solid fa-xmark"></i></button>
+                    <button class="action-icon-btn" title="Approve" onclick="decideStaffApplication('${escapeDocumentText(app.id)}', 'approved')"><i class="fa-solid fa-check text-green"></i></button>
+                    <button class="action-icon-btn danger" title="Reject" onclick="decideStaffApplication('${escapeDocumentText(app.id)}', 'rejected')"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             `;
         }
+
+        // appliedAt can be missing on records written by older versions, and
+        // reading .substring() off undefined threw before any row rendered -
+        // which blanked the whole approvals table instead of one cell.
+        const appliedOn = app.appliedAt ? formatDisplayDate(String(app.appliedAt).substring(0, 10)) : '-';
 
         return `
             <tr>
                 <td>${eventLabel}</td>
                 <td>${service}</td>
-                <td>${app.staffName}</td>
-                <td>${app.phone || '-'}</td>
-                <td>${formatDisplayDate(app.appliedAt.substring(0, 10))}</td>
+                <td>${escapeDocumentText(app.staffName || '-')}</td>
+                <td>${escapeDocumentText(app.phone || '-')}</td>
+                <td>${appliedOn}</td>
                 <td>${statusBadge}</td>
                 <td>${actions}</td>
             </tr>
@@ -2130,18 +2350,41 @@ async function decideStaffApplication(appId, decision) {
     const application = appState.staffApplications.find(a => a.id === appId);
     if (!application) return;
 
+    if (application.status === decision) {
+        showToast(`This application is already ${decision}.`);
+        return;
+    }
+    // Reversing a decision changes who turns up to the job, so make it explicit.
+    if (application.status === 'approved' || application.status === 'rejected') {
+        const staffLabel = application.staffName || 'this staff member';
+        const confirmed = confirm(`${staffLabel} is currently ${application.status}. Change this to ${decision}?`);
+        if (!confirmed) return;
+    }
+
+    const previousStatus = application.status;
     application.status = decision;
     application.decidedAt = new Date().toISOString();
     if (decision === 'approved') ensureApprovedStaffAssignments();
+
+    // Taking an approval back has to take the salary-ledger row with it,
+    // otherwise the staff member stays listed as expected on the event.
+    let keptLedgerRow = false;
+    if (previousStatus === 'approved' && decision !== 'approved') {
+        keptLedgerRow = !releaseStaffAssignmentForApplication(application.id);
+    }
     const saved = await saveState();
     if (!saved) {
+        application.status = previousStatus;
         await loadState();
         showToast('Approval could not be saved. Please try again.');
         renderEventApprovals();
         return;
     }
-    showToast(decision === 'approved' ? 'Staff approved for this event.' : 'Staff application rejected.');
+    showToast(keptLedgerRow
+        ? 'Application rejected, but the salary entry was kept because attendance or payment is already recorded on it.'
+        : decision === 'approved' ? 'Staff approved for this event.' : 'Staff application rejected.');
     renderEventApprovals();
+    renderEventStaffSalary();
 
     const evt = appState.events.find(e => e.id === application.eventId);
     if (evt) notifyStaffOfApprovalDecision(
@@ -2166,6 +2409,29 @@ function filterEventApprovals() {
 // ==========================================
 // EVENT-WISE STAFF ATTENDANCE & SALARY LEDGER (ADMIN ONLY)
 // ==========================================
+
+// Drops the ledger row this application created. Returns false - and keeps the
+// row - when real work has already been recorded against it, because that data
+// is the admin's, not something a status flip should silently delete.
+function releaseStaffAssignmentForApplication(applicationId) {
+    const sourceId = String(applicationId || '');
+    if (!sourceId || !Array.isArray(appState.eventStaffAssignments)) return true;
+
+    const index = appState.eventStaffAssignments.findIndex(assignment =>
+        assignment.sourceApplicationId && String(assignment.sourceApplicationId) === sourceId
+    );
+    if (index < 0) return true;
+
+    const assignment = appState.eventStaffAssignments[index];
+    const hasRecordedWork = (assignment.attendanceStatus && assignment.attendanceStatus !== 'expected')
+        || Number(assignment.salaryTotal) > 0
+        || Number(assignment.amountPaid) > 0
+        || String(assignment.notes || '').trim() !== '';
+    if (hasRecordedWork) return false;
+
+    appState.eventStaffAssignments.splice(index, 1);
+    return true;
+}
 
 function ensureApprovedStaffAssignments() {
     if (!Array.isArray(appState.eventStaffAssignments)) appState.eventStaffAssignments = [];

@@ -30,18 +30,39 @@ Deno.serve(async (req) => {
     const { data: subs, error } = await supabase.from("push_subscriptions").select("*");
     if (error) throw error;
 
+    // Department names and staff names are typed/stored in several places
+    // (profile form, older role field, subscription row), so compare them
+    // case- and whitespace-insensitively instead of by exact string.
+    const norm = (value: unknown) => String(value ?? "").trim().toLowerCase();
+    const wantedDepartments = (Array.isArray(departments) ? departments : []).map(norm).filter(Boolean);
+
     const targetedSubs = (subs || []).filter((sub) => {
-      if (audienceRole && sub.subscriber_role !== audienceRole) return false;
-      if (audienceRole === "staff" && Array.isArray(departments) && departments.length > 0) {
-        return departments.includes(sub.subscriber_department);
+      if (audienceRole && norm(sub.subscriber_role) !== norm(audienceRole)) return false;
+      if (norm(audienceRole) !== "staff") return true;
+
+      // Any of the identity hints may be missing on a given subscription row
+      // (older rows have no staff_profile_id, a renamed profile no longer
+      // matches by name). Treat them as alternatives, not as a priority chain -
+      // the previous version returned false on the first hint it could check,
+      // so an approval alert never fell back to the staff member's name.
+      const matchers: boolean[] = [];
+      if (wantedDepartments.length > 0) {
+        const subDepartment = norm(sub.subscriber_department);
+        // Rows written before the department column existed still have it
+        // empty. A device we cannot classify is better over-notified than
+        // never notified, and it re-classifies itself the next time that
+        // staff member opens the portal.
+        matchers.push(!subDepartment || wantedDepartments.includes(subDepartment));
       }
-      if (audienceRole === "staff" && staffProfileId) {
-        return sub.staff_profile_id === staffProfileId;
+      if (staffProfileId) {
+        matchers.push(!!sub.staff_profile_id && String(sub.staff_profile_id) === String(staffProfileId));
       }
-      if (audienceRole === "staff" && subscriberName) {
-        return String(sub.subscriber_name || "").toLowerCase() === String(subscriberName).toLowerCase();
+      if (subscriberName) {
+        matchers.push(!!sub.subscriber_name && norm(sub.subscriber_name) === norm(subscriberName));
       }
-      return true;
+
+      // No hints at all means "every staff device".
+      return matchers.length === 0 || matchers.some(Boolean);
     });
 
     const payload = JSON.stringify({
