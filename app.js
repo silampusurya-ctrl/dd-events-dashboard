@@ -5599,15 +5599,28 @@ function importDataBackup(event) {
         try {
             const parsedData = JSON.parse(e.target.result);
 
-            if (parsedData.events && parsedData.staff && parsedData.attendance) {
-                appState = parsedData;
-                await saveState();
-                showToast('Backup restored successfully!');
+            // Name what is actually wrong. "Invalid backup file structure" on
+            // its own sends people hunting through the file for a fault that is
+            // usually just the wrong file picked from the folder.
+            const missing = ['events', 'staff', 'attendance']
+                .filter(key => !Array.isArray(parsedData[key]));
+            if (missing.length) {
+                showToast(`This file is not a dashboard backup - it has no ${missing.join(', ')} list. Pick the exported backup JSON.`);
                 document.getElementById('import-file').value = '';
-                await startApplication();
-            } else {
-                showToast('Invalid backup file structure.');
+                return;
             }
+
+            const previousState = appState;
+            appState = parsedData;
+            const saved = await saveState();
+            if (!saved) {
+                appState = previousState;
+                showToast('Backup could not be saved. Nothing was changed.');
+                return;
+            }
+            showToast(`Backup restored: ${parsedData.events.length} events, ${parsedData.staff.length} staff.`);
+            document.getElementById('import-file').value = '';
+            await startApplication();
         } catch (err) {
             showToast('Failed to parse backup JSON.');
             console.error(err);
