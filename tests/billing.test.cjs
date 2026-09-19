@@ -89,6 +89,37 @@ test('photo delivery note applies only when a photography service is present', (
     assert.equal(c.hasPhotographyService([{ desc: 'Videography' }]), false);
 });
 
+test('event execution customer form uses a secure token link and WhatsApp message', () => {
+    const { context: c } = setup();
+    const event = { id: 'evt_1', clientName: 'Meena', clientPhone: '9876543210', eventDate: '2026-09-25', serviceType: 'Wedding' };
+    const token = '89e124d4-71f4-4f1c-a648-6dc2515f963a';
+    const url = c.getEventDetailsFormUrl(token);
+    const message = c.buildEventDetailsWhatsAppMessage(event, token);
+    assert.equal(url, `https://ddeventsandmanagement.com/event-details.html?token=${token}`);
+    assert.ok(message.includes('Meena'));
+    assert.ok(message.includes(url));
+    assert.ok(!url.includes(event.clientPhone));
+});
+
+test('event execution card shows form status without exposing its access token', () => {
+    const { context: c, run } = setup();
+    run("appState.events=[{id:'evt_1',eventDetailsForm:{accessToken:'private-token',status:'submitted',response:{session:'Evening',eventStartTime:'18:30'},submittedAt:'2026-09-19T10:00:00Z'}}]");
+    const html = c.getEventDetailsFormCardHtml({ id: 'evt_1' });
+    assert.ok(html.includes('Details Received'));
+    assert.ok(html.includes('Evening'));
+    assert.ok(html.includes('18:30'));
+    assert.ok(!html.includes('private-token'));
+});
+
+test('newer customer form response survives a later stale dashboard save merge', () => {
+    const { context: c } = setup();
+    const local = [{ id: 'evt_1', eventDetailsForm: { accessToken: 'token', status: 'pending', updatedAt: '2026-09-19T10:00:00Z' } }];
+    const server = [{ id: 'evt_1', eventDetailsForm: { accessToken: 'token', status: 'submitted', response: { session: 'Morning' }, updatedAt: '2026-09-19T10:05:00Z' } }];
+    const merged = c.mergeEventDocumentChanges(local, server);
+    assert.equal(merged[0].eventDetailsForm.status, 'submitted');
+    assert.equal(merged[0].eventDetailsForm.response.session, 'Morning');
+});
+
 test('dashboard money includes Advance Pay through Event Execution stages', () => {
     const { context: c } = setup();
     const summary = c.getDashboardFinancialSummary(currentFinanceEvents());
@@ -166,7 +197,6 @@ test('dashboard updates after completion and reload without deleting historical 
     c.renderDashboard();
     assert.equal(element('stat-booked-value').textContent, '₹12,300.00');
     assert.equal(element('stat-advance-collected').textContent, '₹10,200.00');
-    assert.equal(element('stat-current-received').textContent, '₹10,300.00');
     assert.equal(element('stat-pending-payments').textContent, '₹2,000.00');
     assert.equal(JSON.stringify(events), before);
     events[0].stageIndex = 4;
@@ -174,7 +204,6 @@ test('dashboard updates after completion and reload without deleting historical 
     c.renderDashboard();
     assert.equal(element('stat-booked-value').textContent, '₹11,300.00');
     assert.equal(element('stat-advance-collected').textContent, '₹10,000.00');
-    assert.equal(element('stat-current-received').textContent, '₹10,000.00');
     assert.equal(element('stat-pending-payments').textContent, '₹1,300.00');
     const reload = setup();
     assert.equal(reload.context.getDashboardFinancialSummary(JSON.parse(JSON.stringify(events))).pendingPayments, 1300);
@@ -239,14 +268,14 @@ test('successful shared-data load enables later saves and applies the server sta
     assert.equal(run('lastSeenDashboardUpdateAt'), '2026-08-27T12:00:00.000Z');
 });
 
-test('dashboard copy makes booked value, received, advance and remaining balance unambiguous', () => {
+test('dashboard copy shows only booked value, advance and remaining balance', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     assert.ok(html.includes('Booked Event Value'));
     assert.ok(html.includes('Advance Received'));
-    assert.ok(html.includes('Received So Far'));
     assert.ok(html.includes('Still To Receive'));
-    assert.ok(html.includes('Advance is already included in Received So Far.'));
-    assert.ok(html.includes('Received So Far + Still To Receive'));
+    assert.ok(html.includes('remaining balance after deducting every payment already recorded'));
+    assert.ok(!html.includes('Received So Far'));
+    assert.ok(!html.includes('stat-current-received'));
     assert.ok(!html.includes('Current Quotation Amount'));
     assert.ok(!html.includes('stat-quotation-amount'));
     assert.ok(!html.includes('stat-bills-settled'));
@@ -288,6 +317,48 @@ test('Event Execution is a label-only change preserving the stored stage', () =>
     assert.ok(html.includes('Event Execution Stage'));
     assert.ok(!html.includes('Event Completed'));
     assert.ok(html.includes('id="whatsapp-center-modal"'));
+});
+
+test('quotation can be confirmed without advance and skips directly to Event Execution', async () => {
+    const { context: c, run } = setup();
+    run(`
+        appState.events = [{
+            id: 'evt_without_advance', clientName: 'No Advance Customer', clientPhone: '6374503310',
+            eventDate: '2026-09-10', serviceType: 'Decoration', stageIndex: 1, status: 'quotation',
+            confirmedWithoutAdvance: true, quotationData: { items: [{ desc: 'Decoration', rate: 1000, qty: 1 }], bonusItems: [], discount: 0 }
+        }];
+        saveState = () => Promise.resolve(true);
+        stageNotifications = 0;
+        notifyStaffOfBookedEvent = () => { stageNotifications += 1; };
+        refreshAllViews = () => {};
+        showToast = () => {};
+    `);
+
+    assert.equal(c.getNextStageForEvent(run('appState.events[0]')).key, 'event-completed');
+    assert.equal(await c.advanceEventStage('evt_without_advance'), true);
+    assert.equal(run('appState.events[0].stageIndex'), 3);
+    assert.equal(run('appState.events[0].status'), 'event-completed');
+    assert.equal(run('(appState.events[0].payments || []).length'), 0);
+    assert.equal(run('stageNotifications'), 1);
+});
+
+test('normal quotation approval still moves to Advance Pay', async () => {
+    const { context: c, run } = setup();
+    run(`
+        appState.events = [{
+            id: 'evt_normal_advance', stageIndex: 1, status: 'quotation',
+            confirmedWithoutAdvance: false, quotationData: { items: [], bonusItems: [], discount: 0 }
+        }];
+        saveState = () => Promise.resolve(true);
+        notifyStaffOfBookedEvent = () => {};
+        refreshAllViews = () => {};
+        showToast = () => {};
+    `);
+
+    assert.equal(c.getNextStageForEvent(run('appState.events[0]')).key, 'advance-paid');
+    assert.equal(await c.advanceEventStage('evt_normal_advance'), true);
+    assert.equal(run('appState.events[0].stageIndex'), 2);
+    assert.equal(run('appState.events[0].status'), 'advance-paid');
 });
 
 test('WhatsApp phone normalization supports Indian and international formats', () => {
@@ -339,12 +410,13 @@ test('WhatsApp Center filters customers, escapes content and disables missing ph
     assert.ok(html.includes('&lt;Test Customer&gt;'));
     assert.ok(html.includes('Event Execution'));
     assert.ok(html.includes('Phone number required'));
-    assert.equal((html.match(/ disabled/g) || []).length, 6);
+    assert.equal((html.match(/ disabled/g) || []).length, 7);
     assert.ok(html.includes('Quote Image'));
     assert.ok(html.includes('Bill Image'));
     assert.ok(html.includes('Booking Welcome'));
     assert.ok(html.includes('Event Thank You'));
     assert.ok(html.includes('Payment Thank You'));
+    assert.ok(html.includes('Feedback / Review'));
     element('whatsapp-center-search').value = 'not a customer';
     c.renderWhatsAppCenter();
     assert.ok(element('whatsapp-center-list').innerHTML.includes('No matching customers found.'));
@@ -407,6 +479,29 @@ test('stage messages include the customer and open only at the correct workflow 
     assert.ok(text.includes('Paid Customer'));
     assert.ok(text.includes('*Amount Received:* ₹1,000'));
     assert.ok(text.includes('*Pending Balance:* ₹0'));
+});
+
+test('feedback request opens after Event Execution with the configured Google Review link', () => {
+    const { context: c, run } = setup();
+    c.reviewEvents = [
+        financeEvent('review-ready', 4, 1000, [], { clientName: 'Review Customer', clientPhone: '6374503310', serviceType: 'Decoration' }),
+        financeEvent('review-early', 3, 1000, [], { clientName: 'Early Customer', clientPhone: '6374503310' })
+    ];
+    run(`
+        appState.events = reviewEvents;
+        appState.googleReviewUrl = 'https://g.page/r/Ca560DRIuFyIEAE/review';
+        window.open = url => { window.lastOpen = url; };
+        toastMessages = [];
+        showToast = message => toastMessages.push(message);
+    `);
+
+    assert.equal(c.openCustomerWhatsApp(run('appState.events[0].id'), 'feedback-review'), true);
+    const text = new URL(c.window.lastOpen).searchParams.get('text');
+    assert.ok(text.startsWith('*YOUR FEEDBACK MATTERS - DD EVENTS*'));
+    assert.ok(text.includes('Review Customer'));
+    assert.ok(text.includes('https://g.page/r/Ca560DRIuFyIEAE/review'));
+    assert.equal(c.openCustomerWhatsApp(run('appState.events[1].id'), 'feedback-review'), false);
+    assert.ok(run('toastMessages[0]').includes('after Event Execution'));
 });
 
 test('thank-you messages cannot make premature or incorrect completion claims', () => {

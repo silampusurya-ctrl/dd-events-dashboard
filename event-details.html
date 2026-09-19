@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#7b2cbf">
+    <title>Event Details Form | DD Events</title>
+    <link rel="stylesheet" href="event-details.css?v=1">
+</head>
+<body>
+    <main class="form-shell">
+        <header class="brand-header">
+            <div class="brand-mark">DD</div>
+            <div><p>DD EVENTS &amp; MANAGEMENT</p><h1>Event Details Form</h1></div>
+        </header>
+
+        <section id="loading-state" class="state-card"><span class="spinner"></span><p>Loading your event details...</p></section>
+        <section id="error-state" class="state-card error hidden"><h2>Form unavailable</h2><p id="error-message">Please ask DD Events for a new link.</p></section>
+
+        <section id="form-content" class="hidden">
+            <div class="welcome-card">
+                <p class="eyebrow">BOOKING CONFIRMED</p>
+                <h2 id="customer-heading">Welcome!</h2>
+                <p>உங்கள் event சரியாக plan செய்ய கீழே உள்ள details-ஐ நிரப்புங்கள்.</p>
+                <div class="event-summary">
+                    <div><span>Event Date</span><strong id="summary-date">—</strong></div>
+                    <div><span>Service</span><strong id="summary-service">—</strong></div>
+                    <div><span>Current Venue</span><strong id="summary-venue">—</strong></div>
+                </div>
+            </div>
+
+            <form id="event-details-form" novalidate>
+                <section class="form-section">
+                    <h3>1. Event Session / நிகழ்ச்சி நேரம்</h3>
+                    <div class="session-options">
+                        <label><input type="radio" name="session" value="Morning" required><span>Morning<br><small>காலை</small></span></label>
+                        <label><input type="radio" name="session" value="Evening"><span>Evening<br><small>மாலை</small></span></label>
+                        <label><input type="radio" name="session" value="Full Day"><span>Full Day<br><small>முழு நாள்</small></span></label>
+                        <label><input type="radio" name="session" value="Other"><span>Other<br><small>மற்றவை</small></span></label>
+                    </div>
+                    <div class="form-grid">
+                        <label><span>Event Start Time *</span><input id="event-start-time" type="time" required></label>
+                        <label><span>Guest Arrival Time</span><input id="guest-arrival-time" type="time"></label>
+                        <label><span>Main Program / Muhurtham Time</span><input id="main-program-time" type="time"></label>
+                        <label><span>Team Setup Access Time</span><input id="setup-access-time" type="time"></label>
+                    </div>
+                </section>
+
+                <section class="form-section">
+                    <h3>2. Venue &amp; Contact / இடம் மற்றும் தொடர்பு</h3>
+                    <div class="form-grid">
+                        <label><span>Primary Contact Name *</span><input id="contact-name" type="text" maxlength="120" required></label>
+                        <label><span>Contact Phone *</span><input id="contact-phone" type="tel" maxlength="30" inputmode="tel" required></label>
+                        <label><span>Expected Guest Count</span><input id="guest-count" type="number" min="0" max="100000" inputmode="numeric"></label>
+                        <label><span>Google Maps Link</span><input id="maps-link" type="url" maxlength="1000" placeholder="https://maps.google.com/..."></label>
+                        <label class="full"><span>Exact Venue / Address *</span><textarea id="venue-address" rows="3" maxlength="1000" required></textarea></label>
+                    </div>
+                </section>
+
+                <section class="form-section">
+                    <h3>3. Schedule &amp; Instructions / கூடுதல் விவரங்கள்</h3>
+                    <label><span>Program Schedule / Important Timings</span><textarea id="schedule-notes" rows="4" maxlength="3000" placeholder="Example: Welcome 6:00 PM, cake cutting 7:30 PM..."></textarea></label>
+                    <label><span>Special Instructions for DD Events Team</span><textarea id="special-instructions" rows="4" maxlength="3000" placeholder="Entry restrictions, parking, stage access, special requests..."></textarea></label>
+                </section>
+
+                <div id="form-error" class="form-error hidden"></div>
+                <button id="submit-button" class="submit-button" type="submit">Submit Event Details</button>
+                <p class="privacy-note">This secure form is only for your confirmed DD Events booking.</p>
+            </form>
+        </section>
+
+        <section id="success-state" class="state-card success hidden">
+            <div class="success-icon">✓</div>
+            <h2>Details received — Thank you!</h2>
+            <p>உங்கள் event details DD Events team-க்கு update ஆகிவிட்டது. தேவைப்பட்டால் இதே link-ஐ திறந்து details-ஐ மாற்றலாம்.</p>
+            <button id="edit-response-button" type="button">Edit submitted details</button>
+        </section>
+    </main>
+    <script src="event-details.js?v=1"></script>
+</body>
+</html>
+

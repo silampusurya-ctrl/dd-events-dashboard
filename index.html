@@ -15,7 +15,7 @@
     <link rel="icon" href="icons/favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
 
-    <link rel="stylesheet" href="style.css?v=51">
+    <link rel="stylesheet" href="style.css?v=54">
     <!-- FontAwesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- html2canvas for JPEG export/share of quotations & invoices -->
@@ -364,10 +364,9 @@
                     <div class="money-summary-grid">
                         <article class="money-summary-card total-value"><div class="money-summary-icon"><i class="fa-solid fa-indian-rupee-sign"></i></div><div><span>Booked Event Value</span><strong id="stat-booked-value">₹0.00</strong><small>Total amount expected</small></div></article>
                         <article class="money-summary-card advance-value"><div class="money-summary-icon"><i class="fa-solid fa-hand-holding-dollar"></i></div><div><span>Advance Received</span><strong id="stat-advance-collected">₹0.00</strong><small>Upfront payments received</small></div></article>
-                        <article class="money-summary-card received-value"><div class="money-summary-icon"><i class="fa-solid fa-wallet"></i></div><div><span>Received So Far</span><strong id="stat-current-received">₹0.00</strong><small>Advance already included</small></div></article>
                         <article class="money-summary-card pending-value"><div class="money-summary-icon"><i class="fa-solid fa-hourglass-half"></i></div><div><span>Still To Receive</span><strong id="stat-pending-payments">₹0.00</strong><small>Remaining balance to collect</small></div></article>
                     </div>
-                    <p class="money-summary-equation"><i class="fa-solid fa-circle-info"></i> <strong>Booked Event Value</strong> = Received So Far + Still To Receive. Advance is already included in Received So Far.</p>
+                    <p class="money-summary-equation"><i class="fa-solid fa-circle-info"></i> <strong>Still To Receive</strong> is the remaining balance after deducting every payment already recorded. Advance Received is shown separately.</p>
                 </section>
 
                 <!-- Operational Stats Overview -->
@@ -462,7 +461,7 @@
                         <h2><i class="fa-solid fa-file-signature"></i> Quotation Stage</h2>
                         <span class="column-count" id="count-stage-quotation">0</span>
                     </div>
-                    <p class="stage-desc">Quotation has been sent to the customer. Approve once the advance payment is received to move to the next stage.</p>
+                    <p class="stage-desc">Normally approve after advance payment. For selected customers, tick “Without Advance — Event Confirmed” to skip Advance Pay and move directly to Event Execution.</p>
                     <div class="pipeline-cards-grid" id="cards-stage-quotation">
                         <!-- Dynamic cards -->
                     </div>
@@ -1218,6 +1217,23 @@
                         </div>
                     </div>
 
+                    <!-- Google Review / Feedback -->
+                    <div class="dashboard-card">
+                        <div class="card-header">
+                            <h2><i class="fa-brands fa-google text-lavender"></i> Google Review &amp; Feedback</h2>
+                        </div>
+                        <div class="settings-panel-body">
+                            <p>This link is added automatically when you use the WhatsApp “Feedback / Review” button after Event Execution is completed.</p>
+                            <form id="review-settings-form" onsubmit="event.preventDefault(); saveReviewSettings();">
+                                <div class="form-group">
+                                    <label for="google-review-url">Google Review Link</label>
+                                    <input type="url" id="google-review-url" value="https://g.page/r/Ca560DRIuFyIEAE/review" placeholder="https://g.page/.../review" required>
+                                </div>
+                                <button type="submit" class="btn primary-btn"><i class="fa-solid fa-floppy-disk"></i> Save Review Link</button>
+                            </form>
+                        </div>
+                    </div>
+
                     <!-- Backup & Restore -->
                     <div class="dashboard-card">
                         <div class="card-header">
@@ -1595,6 +1611,20 @@
         </div>
     </div>
 
+    <!-- Modal: customer-submitted event timing and venue details -->
+    <div id="event-details-response-modal" class="modal-overlay hidden">
+        <div class="modal-card event-details-response-modal-card">
+            <div class="modal-header event-details-response-modal-header">
+                <h2><i class="fa-solid fa-clipboard-check"></i> Customer Event Details</h2>
+                <button onclick="closeModal('event-details-response-modal')" class="modal-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="event-details-response-content"></div>
+                <div class="modal-footer"><button type="button" class="btn secondary-btn" onclick="closeModal('event-details-response-modal')">Close</button></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal: browser-specific PWA install instructions -->
     <div id="install-help-modal" class="modal-overlay hidden">
         <div class="modal-card install-help-modal-card">
@@ -1608,7 +1638,7 @@
 
     <!-- Script Import -->
     <script src="document-pricing.js?v=2"></script>
-    <script src="app.js?v=65"></script>
+    <script src="app.js?v=68"></script>
     <script src="sales-billing.js?v=1"></script>
 </body>
 </html>

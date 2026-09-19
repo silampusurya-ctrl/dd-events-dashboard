@@ -44,6 +44,7 @@ const servicePresets = [
 
 const staffDepartments = servicePresets.map(preset => preset.name);
 const EVENT_DOCUMENTS_BUCKET = 'event-documents';
+const DEFAULT_GOOGLE_REVIEW_URL = 'https://g.page/r/Ca560DRIuFyIEAE/review';
 
 const departmentKeywords = {
     'Planning & Consultation': ['planning', 'consultation', 'wedding planning'],
@@ -110,6 +111,7 @@ let currentEventDateView = 'event';
 let currentEventDocumentsEventId = null;
 let currentEventDocumentServiceKey = '';
 let currentEventFinanceEventId = null;
+let currentEventDetailsResponseEventId = null;
 let adminFinanceEntries = [];
 let pendingStaffProfilePhoto = '';
 let currentStaffDirectoryFilter = { type: 'all', value: '' };
@@ -238,6 +240,14 @@ function getStageLabel(key) {
     return stage ? stage.label : key;
 }
 
+function getNextStageForEvent(event) {
+    const currentStage = getStageIndex(event?.status);
+    if (currentStage === getStageIndex('quotation') && event?.confirmedWithoutAdvance) {
+        return STAGE_DEFS[getStageIndex('event-completed')];
+    }
+    return STAGE_DEFS[currentStage + 1] || null;
+}
+
 // Keeps evt.status/evt.delivered in sync with evt.stageIndex, and migrates
 // events saved under the old automatic 5-status model to the new 7-stage one.
 function syncEventStage(evt) {
@@ -262,6 +272,7 @@ async function advanceEventStage(eventId) {
     }
 
     const currentStage = evt.stageIndex;
+    const previousEvent = cloneDocumentData(evt);
 
     // Lock the approved quotation into a separate invoice document when the
     // booking is confirmed, then refresh it once more when Event Execution is
@@ -272,16 +283,44 @@ async function advanceEventStage(eventId) {
         copyQuotationToInvoice(evt);
     }
 
-    evt.stageIndex++;
+    evt.stageIndex = currentStage === getStageIndex('quotation') && evt.confirmedWithoutAdvance
+        ? getStageIndex('event-completed')
+        : currentStage + 1;
     syncEventStage(evt);
-    await saveState();
+    const saved = await saveState();
+    if (!saved) {
+        Object.keys(evt).forEach(key => delete evt[key]);
+        Object.assign(evt, previousEvent);
+        showToast('Stage change could not be saved. Please try again.');
+        refreshAllViews();
+        return false;
+    }
     showToast(`Moved to "${getStageLabel(evt.status)}" stage.`);
     refreshAllViews();
 
     // Alert staff the moment a date gets locked in, so they can apply to work it.
-    if (evt.status === 'advance-paid') {
+    if (currentStage === getStageIndex('quotation') && ['advance-paid', 'event-completed'].includes(evt.status)) {
         notifyStaffOfBookedEvent(evt);
     }
+    return true;
+}
+
+async function setWithoutAdvanceConfirmation(eventId, checked) {
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    if (!event || getStageIndex(event.status) !== getStageIndex('quotation')) return false;
+    const previousValue = Boolean(event.confirmedWithoutAdvance);
+    event.confirmedWithoutAdvance = Boolean(checked);
+    if (!await saveState()) {
+        event.confirmedWithoutAdvance = previousValue;
+        showToast('Confirmation option could not be saved. Please try again.');
+        refreshAllViews();
+        return false;
+    }
+    showToast(event.confirmedWithoutAdvance
+        ? 'Event confirmed without advance. Next approval will move it to Event Execution.'
+        : 'Without-advance confirmation removed.');
+    refreshAllViews();
+    return true;
 }
 
 // Initialize on page load
@@ -480,6 +519,7 @@ function showManualInstallHelp() {
 
 const SUPABASE_URL = 'https://razwvjgajaparzjksoll.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJhend2amdhamFwYXJ6amtzb2xsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMDM0NDMsImV4cCI6MjA5ODg3OTQ0M30.cWqUkKcf6WHs0srbvIqx58kMqSiBXU9NdZy8SBus1OQ';
+const PUBLIC_SITE_URL = 'https://ddeventsandmanagement.com';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Staff use the shared portal password rather than Supabase Auth. Keep their
 // database requests isolated from any saved/expired admin session in `sb`.
@@ -917,6 +957,7 @@ function logout() {
     currentAdminEmail = null;
     hasLoadedSharedState = false;
     currentEventFinanceEventId = null;
+    currentEventDetailsResponseEventId = null;
     adminFinanceEntries = [];
     appState = { events: [], staff: [], attendance: [], workLogs: [], staffApplications: [], eventStaffAssignments: [], webhooks: {} };
     initAuth();
@@ -961,6 +1002,9 @@ function applyLoadedState(stateData) {
     if (!appState.adminEmails) appState.adminEmails = [];
     if (!appState.disabledAdminEmails) appState.disabledAdminEmails = [];
     if (!appState.muhurthamDates) appState.muhurthamDates = getDefaultMuhurthamDates();
+    if (typeof appState.googleReviewUrl !== 'string' || !appState.googleReviewUrl.trim()) {
+        appState.googleReviewUrl = DEFAULT_GOOGLE_REVIEW_URL;
+    }
 
     appState.events.forEach(event => {
         if (!Array.isArray(event.documents)) event.documents = [];
@@ -1020,6 +1064,11 @@ function getEventFinanceEntries(eventId) {
     return adminFinanceEntries.filter(entry => String(entry.eventId) === String(eventId));
 }
 
+function getEventDetailForm(eventId) {
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    return event?.eventDetailsForm || null;
+}
+
 function getEventFinanceTotals(event) {
     const totals = { expenses: 0, investments: 0, labor: 0, revenue: 0, profit: 0 };
     if (!event || !currentAdminEmail) return totals;
@@ -1070,6 +1119,7 @@ async function syncAdminDashboardChanges() {
     lastSeenDashboardUpdateAt = data.updated_at || '';
     refreshAllViews();
     renderAdminAccountsList();
+    if (!document.getElementById('event-details-response-modal')?.classList.contains('hidden')) renderEventDetailsResponseModal();
 
     if (getStaffProfileRevision() !== previousStaffRevision) {
         showToast('Staff profiles updated automatically.');
@@ -1176,6 +1226,7 @@ function initDefaultState() {
         eventStaffAssignments: [],
         adminEmails: [],
         disabledAdminEmails: [],
+        googleReviewUrl: DEFAULT_GOOGLE_REVIEW_URL,
         muhurthamDates: getDefaultMuhurthamDates(),
         webhooks: {
             url: '',
@@ -1278,11 +1329,17 @@ function mergeEventDocumentChanges(localEvents = [], serverEvents = []) {
         const localTime = new Date(event.documentsUpdatedAt || 0).getTime() || 0;
         const serverTime = new Date(serverEvent.documentsUpdatedAt || 0).getTime() || 0;
         const source = serverTime > localTime ? serverEvent : event;
+        const localFormTime = new Date(event.eventDetailsForm?.updatedAt || 0).getTime() || 0;
+        const serverFormTime = new Date(serverEvent.eventDetailsForm?.updatedAt || 0).getTime() || 0;
+        const formSource = serverFormTime > localFormTime ? serverEvent : event;
         return {
             ...event,
             documents: cloneDocumentData(source.documents || []),
             documentNotes: source.documentNotes || '',
-            documentsUpdatedAt: source.documentsUpdatedAt || event.documentsUpdatedAt || ''
+            documentsUpdatedAt: source.documentsUpdatedAt || event.documentsUpdatedAt || '',
+            eventDetailsForm: formSource.eventDetailsForm
+                ? cloneDocumentData(formSource.eventDetailsForm)
+                : event.eventDetailsForm
         };
     });
 }
@@ -2924,6 +2981,7 @@ function switchTab(tabId) {
         renderAdminAccountsList();
         refreshAdminNotifyUI();
         renderMuhurthamDatesList();
+        loadReviewSettingsInForm();
     }
     
     hideView('notification-dropdown');
@@ -3159,7 +3217,7 @@ function setEventDateView(view) {
 
 function renderEventSummaryCard(evt) {
     const calculations = getEventInvoiceCalculations(evt);
-    const nextStage = STAGE_DEFS[getStageIndex(evt.status) + 1];
+    const nextStage = getNextStageForEvent(evt);
     const amount = calculations.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const receivedDate = evt.createdDate ? formatDisplayDate(evt.createdDate) : 'Not recorded';
     const documentCount = Array.isArray(evt.documents) ? evt.documents.length : 0;
@@ -3187,6 +3245,10 @@ function renderEventSummaryCard(evt) {
                 ${isBookedEvent && currentAdminEmail ? `<button class="event-action-btn event-expenses-action" onclick="openEventExpenses('${evt.id}')"><i class="fa-solid fa-lock"></i> Expenses${financeCount ? ` (${financeCount})` : ''}</button>` : ''}
             </div>
             <div class="event-progress-action">
+                ${evt.status === 'quotation' ? `<label class="without-advance-toggle compact" onclick="event.stopPropagation()">
+                    <input type="checkbox" ${evt.confirmedWithoutAdvance ? 'checked' : ''} onchange="setWithoutAdvanceConfirmation('${evt.id}', this.checked)">
+                    <span>Confirm without advance</span>
+                </label>` : ''}
                 ${evt.delivered || !nextStage
                     ? '<span class="event-delivered"><i class="fa-solid fa-circle-check"></i> Delivered</span>'
                     : `<button class="btn event-approve-btn" onclick="advanceEventStage('${evt.id}')"><i class="fa-solid fa-check"></i> Move to ${escapeDocumentText(nextStage.label)}</button>`}
@@ -4385,6 +4447,132 @@ function openWhatsAppChat(phone, message = '') {
     return true;
 }
 
+function getEventDetailsFormUrl(accessToken) {
+    return `${PUBLIC_SITE_URL}/event-details.html?token=${encodeURIComponent(String(accessToken || ''))}`;
+}
+
+function buildEventDetailsWhatsAppMessage(event, accessToken) {
+    return `*DD EVENTS - EVENT DETAILS FORM*
+
+Hello ${event.clientName || 'Customer'},
+
+Your event booking is confirmed. Please fill in the event timing, venue, contact person and schedule details using this secure form:
+
+${getEventDetailsFormUrl(accessToken)}
+
+*Event Date:* ${formatDisplayDate(event.eventDate)}
+*Service:* ${event.serviceType || 'Event Service'}
+
+இந்த form-ல் event timing மற்றும் தேவையான basic details-ஐ update செய்யுங்கள். Thank you!`;
+}
+
+async function ensureEventDetailForm(event) {
+    const existing = getEventDetailForm(event.id);
+    if (existing?.accessToken) return existing;
+
+    const previousValue = event.eventDetailsForm;
+    const now = new Date().toISOString();
+    event.eventDetailsForm = {
+        accessToken: crypto.randomUUID(),
+        status: 'pending',
+        response: {},
+        createdAt: now,
+        updatedAt: now
+    };
+
+    if (!await saveState()) {
+        event.eventDetailsForm = previousValue;
+        throw new Error('The form link could not be saved.');
+    }
+    return event.eventDetailsForm;
+}
+
+async function shareEventDetailsForm(eventId) {
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    if (!event || event.status !== 'event-completed') {
+        showToast('This form is available only in the Event Execution stage.');
+        return false;
+    }
+    if (!normalizeWhatsAppPhone(event.clientPhone)) {
+        showToast('Add a valid customer phone number first.');
+        return false;
+    }
+
+    try {
+        const form = await ensureEventDetailForm(event);
+        refreshActivePipelineStage();
+        return openWhatsAppChat(event.clientPhone, buildEventDetailsWhatsAppMessage(event, form.accessToken));
+    } catch (error) {
+        console.error('Customer event form could not be prepared', error);
+        showToast('Customer form could not be prepared. Please try again.');
+        return false;
+    }
+}
+
+function getEventDetailsFormCardHtml(event) {
+    const form = getEventDetailForm(event.id);
+    if (!form) {
+        return `<div class="event-form-status not-shared"><i class="fa-solid fa-clipboard-list"></i><span><strong>Event Details Form</strong><small>Not shared yet</small></span></div>`;
+    }
+    if (form.status === 'submitted') {
+        const session = escapeDocumentText(form.response.session || 'Details received');
+        return `<div class="event-form-status submitted"><i class="fa-solid fa-circle-check"></i><span><strong>Details Received</strong><small>${session}${form.response.eventStartTime ? ` · ${escapeDocumentText(form.response.eventStartTime)}` : ''}</small></span></div>`;
+    }
+    return `<div class="event-form-status pending"><i class="fa-solid fa-clock"></i><span><strong>Form Shared</strong><small>Waiting for customer response</small></span></div>`;
+}
+
+function formatSubmittedDate(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function openEventDetailsResponse(eventId) {
+    const form = getEventDetailForm(eventId);
+    if (!form || form.status !== 'submitted') {
+        showToast('Customer details have not been submitted yet.');
+        return false;
+    }
+    currentEventDetailsResponseEventId = String(eventId);
+    renderEventDetailsResponseModal();
+    openModal('event-details-response-modal');
+    return true;
+}
+
+function renderEventDetailsResponseModal() {
+    const event = appState.events.find(item => String(item.id) === String(currentEventDetailsResponseEventId));
+    const form = getEventDetailForm(currentEventDetailsResponseEventId);
+    const container = document.getElementById('event-details-response-content');
+    if (!event || !form || !container) return;
+
+    const response = form.response || {};
+    const rows = [
+        ['Session', response.session],
+        ['Event Start Time', response.eventStartTime],
+        ['Guest Arrival Time', response.guestArrivalTime],
+        ['Main Program / Muhurtham', response.mainProgramTime],
+        ['Team Setup Access Time', response.setupAccessTime],
+        ['Expected Guests', response.guestCount || '—'],
+        ['Primary Contact', response.contactName],
+        ['Contact Phone', response.contactPhone],
+        ['Exact Venue / Address', response.venueAddress],
+        ['Program Schedule', response.scheduleNotes],
+        ['Special Instructions', response.specialInstructions]
+    ];
+    const mapsLink = /^https?:\/\//i.test(String(response.mapsLink || '')) ? String(response.mapsLink) : '';
+
+    container.innerHTML = `
+        <div class="event-response-heading">
+            <div><span>Customer</span><strong>${escapeDocumentText(event.clientName)}</strong></div>
+            <div><span>Event Date</span><strong>${escapeDocumentText(formatDisplayDate(event.eventDate))}</strong></div>
+            <div><span>Submitted</span><strong>${escapeDocumentText(formatSubmittedDate(form.submittedAt))}</strong></div>
+        </div>
+        <div class="event-response-grid">
+            ${rows.map(([label, value]) => `<div><span>${escapeDocumentText(label)}</span><strong>${escapeDocumentText(value || '—')}</strong></div>`).join('')}
+        </div>
+        ${mapsLink ? `<a class="event-response-map" href="${escapeDocumentText(mapsLink)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-location-dot"></i> Open Google Maps</a>` : ''}`;
+}
+
 function buildQuotationWhatsAppMessage(event) {
     const quote = getQuotationDocument(event);
     const calcs = getQuotationCalculations(event);
@@ -4908,6 +5096,16 @@ function openCustomerWhatsApp(eventId, type) {
         showToast('Event thank-you is available after execution moves to Pending Bill.');
         return false;
     }
+    if (type === 'feedback-review') {
+        if (stageIndex < 4) {
+            showToast('Feedback request is available after Event Execution is completed.');
+            return false;
+        }
+        if (!getGoogleReviewUrl()) {
+            showToast('Add a valid Google Review link in Settings first.');
+            return false;
+        }
+    }
     if (type === 'payment-thanks') {
         const calcs = getEventInvoiceCalculations(event);
         if (stageIndex < 5) {
@@ -4925,6 +5123,7 @@ function openCustomerWhatsApp(eventId, type) {
     if (type === 'booking-welcome') message = buildBookingWelcomeMessage(event);
     if (type === 'event-thanks') message = buildEventThankYouMessage(event);
     if (type === 'payment-thanks') message = buildPaymentThankYouMessage(event);
+    if (type === 'feedback-review') message = buildFeedbackReviewMessage(event);
     return openWhatsAppChat(event.clientPhone, message);
 }
 
@@ -4979,6 +5178,34 @@ With thanks,
 *DD Events (Events & Management)*`;
 }
 
+function getGoogleReviewUrl() {
+    const value = String(appState.googleReviewUrl || DEFAULT_GOOGLE_REVIEW_URL).trim();
+    try {
+        const parsed = new URL(value);
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+function buildFeedbackReviewMessage(event) {
+    const reviewUrl = getGoogleReviewUrl();
+    return `*YOUR FEEDBACK MATTERS - DD EVENTS*
+-------------------------------
+Hi *${event.clientName || 'Customer'}*,
+
+Thank you for choosing DD Events for your ${event.serviceType || 'event'}. We hope you had a wonderful experience with our team.
+
+Please take a moment to share your feedback and Google review. Your review helps us improve and helps other families choose us with confidence.
+
+*Write a review:* ${reviewUrl}
+
+Thank you for your support!
+
+With thanks,
+*DD Events (Events & Management)*`;
+}
+
 async function shareCustomerDocumentImage(eventId, type) {
     const event = appState.events.find(item => item.id === eventId);
     if (!event) {
@@ -5025,6 +5252,7 @@ function renderWhatsAppCenter() {
         const invoiceReady = stageIndex >= 2;
         const bookingWelcomeReady = hasPhone && stageIndex >= 2;
         const eventThanksReady = hasPhone && stageIndex >= 4;
+        const feedbackReady = hasPhone && stageIndex >= 4 && Boolean(getGoogleReviewUrl());
         const paymentCalcs = getEventInvoiceCalculations(event);
         const paymentThanksReady = hasPhone && stageIndex >= 5 && paymentCalcs.pendingBalance <= 0;
         const disabled = hasPhone ? '' : ' disabled';
@@ -5048,6 +5276,7 @@ function renderWhatsAppCenter() {
                     <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'booking-welcome')"${bookingWelcomeReady ? '' : ' disabled'} title="${stageIndex >= 2 ? 'Send booking confirmation and welcome' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-handshake"></i> Booking Welcome</button>
                     <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'event-thanks')"${eventThanksReady ? '' : ' disabled'} title="${stageIndex >= 4 ? 'Thank the customer after event execution' : 'Available after Event Execution'}"><i class="fa-solid fa-heart"></i> Event Thank You</button>
                     <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'payment-thanks')"${paymentThanksReady ? '' : ' disabled'} title="${stageIndex < 5 ? 'Available at Completed Bill' : paymentCalcs.pendingBalance > 0 ? 'Full payment must be recorded first' : 'Confirm full payment and thank the customer'}"><i class="fa-solid fa-circle-check"></i> Payment Thank You</button>
+                    <button type="button" class="whatsapp-action-btn review" onclick="openCustomerWhatsApp(${eventArgument}, 'feedback-review')"${feedbackReady ? '' : ' disabled'} title="${stageIndex < 4 ? 'Available after Event Execution is completed' : !getGoogleReviewUrl() ? 'Add Google Review link in Settings' : 'Ask for feedback and a Google review'}"><i class="fa-brands fa-google"></i> Feedback / Review</button>
                     <button type="button" class="whatsapp-action-btn" onclick="openCustomerWhatsApp(${eventArgument}, 'chat')"${disabled}><i class="fa-brands fa-whatsapp"></i> Chat</button>
                 </div></div>
             </div>
@@ -5775,6 +6004,37 @@ function saveWebhookSettings() {
     showToast('Webhook settings saved successfully.');
 }
 
+function loadReviewSettingsInForm() {
+    const input = document.getElementById('google-review-url');
+    if (input) input.value = appState.googleReviewUrl || DEFAULT_GOOGLE_REVIEW_URL;
+}
+
+async function saveReviewSettings() {
+    const input = document.getElementById('google-review-url');
+    if (!input) return false;
+    const value = input.value.trim();
+    let normalizedUrl = '';
+    try {
+        const parsed = new URL(value);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid protocol');
+        normalizedUrl = parsed.href;
+    } catch (error) {
+        showToast('Enter a valid Google Review link starting with https://');
+        return false;
+    }
+
+    const previousUrl = appState.googleReviewUrl;
+    appState.googleReviewUrl = normalizedUrl;
+    if (!await saveState()) {
+        appState.googleReviewUrl = previousUrl;
+        showToast('Google Review link could not be saved. Please try again.');
+        return false;
+    }
+    input.value = normalizedUrl;
+    showToast('Google Review link saved successfully.');
+    return true;
+}
+
 async function triggerWebhook(triggerType, payload) {
     if (!appState.webhooks || !appState.webhooks.url) return;
     
@@ -5939,7 +6199,6 @@ function renderDashboard() {
     document.getElementById('stat-active-events').textContent = activeEvents;
     document.getElementById('stat-booked-value').textContent = '₹' + financials.bookedEventValue.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     document.getElementById('stat-advance-collected').textContent = '₹' + financials.advanceCollected.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-    document.getElementById('stat-current-received').textContent = '₹' + financials.amountReceived.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     document.getElementById('stat-completed-events').textContent = completedEvents;
     document.getElementById('stat-pending-payments').textContent = '₹' + financials.pendingPayments.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     document.getElementById('stat-staff-present').textContent = staffPresent;
@@ -6019,12 +6278,13 @@ function renderPipelineStage(stageKey) {
 
     const isLastStage = getStageIndex(stageKey) === STAGE_DEFS.length - 1;
     const isBookedStage = getStageIndex(stageKey) >= getStageIndex('advance-paid');
-    const nextLabel = isLastStage ? '' : getStageLabel(STAGE_DEFS[getStageIndex(stageKey) + 1].key);
-
     stageEvents.forEach(evt => {
         const calcs = getEventInvoiceCalculations(evt);
         const documentCount = Array.isArray(evt.documents) ? evt.documents.length : 0;
         const financeCount = getEventFinanceEntries(evt.id).length;
+        const eventDetailsForm = getEventDetailForm(evt.id);
+        const nextStage = getNextStageForEvent(evt);
+        const nextLabel = nextStage ? nextStage.label : '';
 
         const card = document.createElement('div');
         card.className = 'kanban-card';
@@ -6035,6 +6295,10 @@ function renderPipelineStage(stageKey) {
             <p><i class="fa-solid fa-tags"></i> ${evt.serviceType}</p>
             <p class="kanban-card-total">Quote: ₹${calcs.grandTotal.toLocaleString('en-IN')}</p>
             <p>Paid: ₹${calcs.totalPaid.toLocaleString('en-IN')} | Bal: ₹${calcs.pendingBalance.toLocaleString('en-IN')}</p>
+            ${evt.confirmedWithoutAdvance && getStageIndex(evt.status) >= getStageIndex('event-completed')
+                ? '<p class="without-advance-status"><i class="fa-solid fa-circle-check"></i> Confirmed without advance</p>'
+                : ''}
+            ${stageKey === 'event-completed' ? getEventDetailsFormCardHtml(evt) : ''}
             <div class="kanban-card-actions no-print">
                 <button onclick="event.stopPropagation(); startQuotationForEvent('${evt.id}')" title="Quotation"><i class="fa-solid fa-file-signature"></i></button>
                 <button onclick="event.stopPropagation(); startBillingForEvent('${evt.id}')" title="Invoicing"><i class="fa-solid fa-file-invoice-dollar"></i></button>
@@ -6043,10 +6307,22 @@ function renderPipelineStage(stageKey) {
             <button class="btn btn-block kanban-documents-btn no-print" onclick="event.stopPropagation(); openEventDocuments('${evt.id}')">
                 <i class="fa-solid fa-folder-open"></i> Documents${documentCount ? ` (${documentCount})` : ''}
             </button>` : ''}
+            ${stageKey === 'event-completed' ? `
+            <div class="event-form-actions no-print">
+                <button class="btn btn-block event-form-share-btn" onclick="event.stopPropagation(); shareEventDetailsForm('${evt.id}')">
+                    <i class="fa-brands fa-whatsapp"></i> ${eventDetailsForm ? 'Share Form Again' : 'Share Details Form'}
+                </button>
+                ${eventDetailsForm?.status === 'submitted' ? `<button class="btn btn-block event-form-view-btn" onclick="event.stopPropagation(); openEventDetailsResponse('${evt.id}')"><i class="fa-solid fa-eye"></i> View Customer Details</button>` : ''}
+            </div>` : ''}
             ${isBookedStage && currentAdminEmail ? `
             <button class="btn btn-block kanban-expenses-btn no-print" onclick="event.stopPropagation(); openEventExpenses('${evt.id}')">
                 <i class="fa-solid fa-lock"></i> Admin Expenses${financeCount ? ` (${financeCount})` : ''}
             </button>` : ''}
+            ${stageKey === 'quotation' ? `
+            <label class="without-advance-toggle no-print" onclick="event.stopPropagation()">
+                <input type="checkbox" ${evt.confirmedWithoutAdvance ? 'checked' : ''} onchange="setWithoutAdvanceConfirmation('${evt.id}', this.checked)">
+                <span><strong>Without Advance</strong> — Event Confirmed</span>
+            </label>` : ''}
             ${!isLastStage ? `
             <button class="btn primary-btn btn-block approve-stage-btn no-print" onclick="event.stopPropagation(); advanceEventStage('${evt.id}')">
                 <i class="fa-solid fa-check"></i> Approve &rarr; ${nextLabel}

@@ -868,6 +868,7 @@ textarea:focus {
 .whatsapp-action-btn.primary { background: #128c4f; border-color: #128c4f; color: #fff; }
 .whatsapp-action-btn.image { background: #f4edff; border-color: #d7bdf2; color: #6f2da8; }
 .whatsapp-action-btn.message { background: #fff8e8; border-color: #efd89c; color: #8a5a00; }
+.whatsapp-action-btn.review { background: #eef7ff; border-color: #b9d8f3; color: #1769aa; }
 .whatsapp-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* Notification Bell Dropdown */
@@ -1090,6 +1091,11 @@ textarea:focus {
 .event-action-btn.event-expenses-action:hover { color:#fff; background:#b03a2e; }
 .event-action-btn.event-expenses-action:hover i { color:#fff; }
 .event-approve-btn { padding:7px 11px; font-size:.8rem; color:#fff; background:var(--primary-lavender); box-shadow:none; }
+.without-advance-toggle { display:flex; align-items:flex-start; gap:9px; margin:10px 0; padding:10px 11px; border:1px solid #efc15c; border-radius:8px; background:#fff9e8; color:#6f4a00; font-size:.82rem; line-height:1.3; cursor:pointer; }
+.without-advance-toggle input { width:17px; height:17px; flex:0 0 auto; margin:0; accent-color:#c78200; }
+.without-advance-toggle.compact { margin:0; padding:7px 9px; }
+.without-advance-status { padding:7px 9px; border-radius:7px; color:#705000; background:#fff5d6; font-weight:700; font-size:.78rem; }
+.without-advance-status i { color:#c78200; }
 .event-delivered { color:var(--color-delivered); font-weight:bold; font-size:.88rem; }
 .events-empty-state { padding:55px 20px; text-align:center; background:#fff; border:1px dashed var(--card-border); border-radius:12px; color:var(--text-muted); }
 .events-empty-state i { font-size:2rem; color:var(--primary-soft); margin-bottom:8px; }
@@ -1118,7 +1124,7 @@ textarea:focus {
 
 .money-summary-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
 }
 
@@ -1153,8 +1159,6 @@ textarea:focus {
 .money-summary-card.total-value .money-summary-icon { background: rgba(123, 44, 191, .1); color: var(--primary-lavender); }
 .money-summary-card.advance-value { border-left-color: #d69e00; }
 .money-summary-card.advance-value .money-summary-icon { background: #fff7d6; color: #a87500; }
-.money-summary-card.received-value { border-left-color: #16845b; }
-.money-summary-card.received-value .money-summary-icon { background: #e3f7ee; color: #146c4c; }
 .money-summary-card.pending-value { border-left-color: #d64545; }
 .money-summary-card.pending-value .money-summary-icon { background: #fff0f0; color: #b62f2f; }
 
@@ -1491,6 +1495,17 @@ textarea:focus {
     background: #b03a2e;
     transform: translateY(-1px);
 }
+
+.event-form-status { display:flex; align-items:center; gap:9px; padding:10px; margin:10px 0; border:1px solid rgba(123,44,191,.16); border-radius:8px; background:rgba(123,44,191,.045); }
+.event-form-status i { display:grid; width:31px; height:31px; place-items:center; flex:0 0 31px; border-radius:50%; color:#735b82; background:#fff; }
+.event-form-status span { display:flex; min-width:0; flex-direction:column; gap:2px; }
+.event-form-status strong { font-size:.8rem; }.event-form-status small { color:var(--text-muted); font-size:.7rem; }
+.event-form-status.pending { color:#8a6200; border-color:rgba(232,185,0,.25); background:rgba(255,213,0,.08); }.event-form-status.pending i { color:#9b7300; }
+.event-form-status.submitted { color:#137348; border-color:rgba(22,143,89,.24); background:rgba(22,143,89,.07); }.event-form-status.submitted i { color:#168f59; }
+.event-form-actions { display:grid; grid-template-columns:1fr; gap:7px; margin:8px 0; }
+.event-form-actions .btn { margin:0; }
+.event-form-share-btn { color:#fff; border-color:#128c4f; background:#128c4f; }.event-form-share-btn:hover { background:#0e713f; }
+.event-form-view-btn { color:#5a189a; border-color:rgba(90,24,154,.23); background:#f8f0ff; }.event-form-view-btn:hover { color:#fff; background:#7b2cbf; }
 
 .approve-stage-btn {
     margin-top: 12px;
@@ -2656,6 +2671,18 @@ tr.row-highlight-week td:first-child {
 
 /* Admin-only event expenses, investment and profit */
 .event-expenses-modal-card { max-width: 980px; }
+
+/* Customer-submitted event execution details */
+.event-details-response-modal-card { max-width:820px; }
+.event-details-response-modal-header { background:linear-gradient(135deg,#126e4a,#1ca76e); }
+.event-response-heading { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-bottom:13px; }
+.event-response-heading>div,.event-response-grid>div { display:flex; min-width:0; flex-direction:column; gap:4px; padding:11px; border:1px solid rgba(36,0,70,.1); border-radius:8px; background:#fdfbff; }
+.event-response-heading span,.event-response-grid span { color:var(--text-muted); font-size:.68rem; font-weight:800; letter-spacing:.3px; text-transform:uppercase; }
+.event-response-heading strong,.event-response-grid strong { overflow-wrap:anywhere; }
+.event-response-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.event-response-grid>div:nth-last-child(-n+3) { grid-column:1/-1; }
+.event-response-map { display:inline-flex; align-items:center; gap:7px; padding:10px 13px; margin-top:12px; border:1px solid rgba(22,143,89,.22); border-radius:8px; color:#137348; background:rgba(22,143,89,.06); font-weight:800; text-decoration:none; }
+.event-response-map:hover { color:#fff; background:#168f59; }
 .event-expenses-modal-header { background: linear-gradient(135deg, #72281f 0%, #b03a2e 100%); }
 .event-finance-private-note { display:flex; align-items:flex-start; gap:10px; padding:11px 13px; margin-bottom:14px; border:1px solid rgba(192,57,43,.22); border-radius:9px; color:#7d2b22; background:rgba(231,76,60,.065); font-size:.82rem; line-height:1.4; }
 .event-finance-private-note i { margin-top:2px; }
@@ -3362,6 +3389,8 @@ tr.row-highlight-week td:first-child {
 }
 
 @media (max-width: 480px) {
+    .event-response-heading,.event-response-grid { grid-template-columns:1fr; }
+    .event-response-grid>div:nth-last-child(-n+3) { grid-column:1; }
     .event-expenses-modal-card .modal-body { padding:13px; }
     .event-finance-event-title,.event-finance-entry-form { grid-template-columns:1fr; }
     .event-finance-total-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
