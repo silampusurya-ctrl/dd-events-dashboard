@@ -71,10 +71,10 @@ test('public form POST validates and writes the response using an optimistic upd
             body: {
                 token: '89e124d4-71f4-4f1c-a648-6dc2515f963a',
                 response: {
-                    session: 'Evening', eventStartTime: '18:30', guestArrivalTime: '18:00',
-                    mainProgramTime: '19:30', setupAccessTime: '14:00', guestCount: 500,
+                    session: 'Evening', eventStartTime: '18:30',
+                    mainProgramTime: '19:30', setupAccessTime: '14:00',
                     contactName: 'Kumar', contactPhone: '9876543210', venueAddress: 'Main Hall',
-                    mapsLink: 'https://maps.google.com/example', scheduleNotes: 'Reception', specialInstructions: 'Use side gate'
+                    scheduleNotes: 'Reception', specialInstructions: 'Use side gate'
                 }
             }
         }, res);
@@ -82,6 +82,9 @@ test('public form POST validates and writes the response using an optimistic upd
         assert.equal(calls, 2);
         assert.equal(patchedBody.data.events[0].eventDetailsForm.status, 'submitted');
         assert.equal(patchedBody.data.events[0].eventDetailsForm.response.session, 'Evening');
+        assert.equal(patchedBody.data.events[0].eventDetailsForm.response.guestArrivalTime, undefined);
+        assert.equal(patchedBody.data.events[0].eventDetailsForm.response.guestCount, undefined);
+        assert.equal(patchedBody.data.events[0].eventDetailsForm.response.mapsLink, undefined);
         assert.equal(res.body.response.contactName, 'Kumar');
     } finally {
         global.fetch = originalFetch;
@@ -101,4 +104,3 @@ test('public form rejects invalid tokens before reading the dashboard', async ()
         global.fetch = originalFetch;
     }
 });
-

@@ -4549,17 +4549,14 @@ function renderEventDetailsResponseModal() {
     const rows = [
         ['Session', response.session],
         ['Event Start Time', response.eventStartTime],
-        ['Guest Arrival Time', response.guestArrivalTime],
         ['Main Program / Muhurtham', response.mainProgramTime],
         ['Team Setup Access Time', response.setupAccessTime],
-        ['Expected Guests', response.guestCount || '—'],
         ['Primary Contact', response.contactName],
         ['Contact Phone', response.contactPhone],
         ['Exact Venue / Address', response.venueAddress],
         ['Program Schedule', response.scheduleNotes],
         ['Special Instructions', response.specialInstructions]
     ];
-    const mapsLink = /^https?:\/\//i.test(String(response.mapsLink || '')) ? String(response.mapsLink) : '';
 
     container.innerHTML = `
         <div class="event-response-heading">
@@ -4569,8 +4566,7 @@ function renderEventDetailsResponseModal() {
         </div>
         <div class="event-response-grid">
             ${rows.map(([label, value]) => `<div><span>${escapeDocumentText(label)}</span><strong>${escapeDocumentText(value || '—')}</strong></div>`).join('')}
-        </div>
-        ${mapsLink ? `<a class="event-response-map" href="${escapeDocumentText(mapsLink)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-location-dot"></i> Open Google Maps</a>` : ''}`;
+        </div>`;
 }
 
 function buildQuotationWhatsAppMessage(event) {

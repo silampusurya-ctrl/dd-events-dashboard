@@ -40,7 +40,6 @@
                     </div>
                     <div class="form-grid">
                         <label><span>Event Start Time *</span><input id="event-start-time" type="time" required></label>
-                        <label><span>Guest Arrival Time</span><input id="guest-arrival-time" type="time"></label>
                         <label><span>Main Program / Muhurtham Time</span><input id="main-program-time" type="time"></label>
                         <label><span>Team Setup Access Time</span><input id="setup-access-time" type="time"></label>
                     </div>
@@ -51,8 +50,6 @@
                     <div class="form-grid">
                         <label><span>Primary Contact Name *</span><input id="contact-name" type="text" maxlength="120" required></label>
                         <label><span>Contact Phone *</span><input id="contact-phone" type="tel" maxlength="30" inputmode="tel" required></label>
-                        <label><span>Expected Guest Count</span><input id="guest-count" type="number" min="0" max="100000" inputmode="numeric"></label>
-                        <label><span>Google Maps Link</span><input id="maps-link" type="url" maxlength="1000" placeholder="https://maps.google.com/..."></label>
                         <label class="full"><span>Exact Venue / Address *</span><textarea id="venue-address" rows="3" maxlength="1000" required></textarea></label>
                     </div>
                 </section>
@@ -76,7 +73,6 @@
             <button id="edit-response-button" type="button">Edit submitted details</button>
         </section>
     </main>
-    <script src="event-details.js?v=1"></script>
+    <script src="event-details.js?v=2"></script>
 </body>
 </html>
-

@@ -16,16 +16,6 @@ function validTime(value) {
     return !value || /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function validUrl(value) {
-    if (!value) return true;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'https:' || url.protocol === 'http:';
-    } catch {
-        return false;
-    }
-}
-
 function findEventByToken(state, token) {
     return (state?.events || []).find(event => event?.eventDetailsForm?.accessToken === token) || null;
 }
@@ -67,25 +57,20 @@ async function updateDashboard(row, data) {
 function validateResponse(submitted) {
     const session = cleanText(submitted?.session, 30);
     const eventStartTime = cleanText(submitted?.eventStartTime, 5);
-    const guestArrivalTime = cleanText(submitted?.guestArrivalTime, 5);
     const mainProgramTime = cleanText(submitted?.mainProgramTime, 5);
     const setupAccessTime = cleanText(submitted?.setupAccessTime, 5);
     const contactName = cleanText(submitted?.contactName, 120);
     const contactPhone = cleanText(submitted?.contactPhone, 30);
     const venueAddress = cleanText(submitted?.venueAddress, 1000);
-    const mapsLink = cleanText(submitted?.mapsLink, 1000);
     const scheduleNotes = cleanText(submitted?.scheduleNotes, 3000);
     const specialInstructions = cleanText(submitted?.specialInstructions, 3000);
-    const guestCountValue = Number(submitted?.guestCount);
-    const guestCount = Number.isFinite(guestCountValue) ? Math.max(0, Math.min(100000, Math.round(guestCountValue))) : 0;
 
     if (!['Morning', 'Evening', 'Full Day', 'Other'].includes(session)) throw new Error('Please choose the event session.');
-    if (!eventStartTime || !validTime(eventStartTime) || !validTime(guestArrivalTime) || !validTime(mainProgramTime) || !validTime(setupAccessTime)) throw new Error('Please check the event timings.');
+    if (!eventStartTime || !validTime(eventStartTime) || !validTime(mainProgramTime) || !validTime(setupAccessTime)) throw new Error('Please check the event timings.');
     if (!contactName || !/^[0-9+()\-\s]{7,30}$/.test(contactPhone)) throw new Error('Please enter a valid contact name and phone number.');
     if (!venueAddress) throw new Error('Please enter the event venue/address.');
-    if (!validUrl(mapsLink)) throw new Error('Please enter a valid Google Maps link.');
 
-    return { session, eventStartTime, guestArrivalTime, mainProgramTime, setupAccessTime, guestCount, contactName, contactPhone, venueAddress, mapsLink, scheduleNotes, specialInstructions };
+    return { session, eventStartTime, mainProgramTime, setupAccessTime, contactName, contactPhone, venueAddress, scheduleNotes, specialInstructions };
 }
 
 module.exports = async function handler(req, res) {
@@ -133,4 +118,3 @@ module.exports = async function handler(req, res) {
         return res.status(500).json({ error: 'The form could not be saved. Please try again.' });
     }
 };
-

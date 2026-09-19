@@ -101,6 +101,21 @@ test('event execution customer form uses a secure token link and WhatsApp messag
     assert.ok(!url.includes(event.clientPhone));
 });
 
+test('customer event form omits unnecessary arrival, guest count and map fields', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'event-details.html'), 'utf8');
+    const script = fs.readFileSync(path.join(__dirname, '..', 'event-details.js'), 'utf8');
+    const adminScript = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+    for (const removed of ['guest-arrival-time', 'guest-count', 'maps-link']) {
+        assert.equal(html.includes(removed), false);
+        assert.equal(script.includes(removed), false);
+    }
+    assert.equal(adminScript.includes("['Guest Arrival Time', response.guestArrivalTime]"), false);
+    assert.equal(adminScript.includes("['Expected Guests', response.guestCount"), false);
+    assert.equal(adminScript.includes("['Google Maps Link', response.mapsLink]"), false);
+    assert.ok(html.includes('event-start-time'));
+    assert.ok(html.includes('main-program-time'));
+});
+
 test('event execution card shows form status without exposing its access token', () => {
     const { context: c, run } = setup();
     run("appState.events=[{id:'evt_1',eventDetailsForm:{accessToken:'private-token',status:'submitted',response:{session:'Evening',eventStartTime:'18:30'},submittedAt:'2026-09-19T10:00:00Z'}}]");

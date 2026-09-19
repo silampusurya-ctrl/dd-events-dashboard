@@ -22,14 +22,11 @@ function fillResponse(response = {}) {
         .find(input => input.value === (response.session || ''));
     if (session) session.checked = true;
     setValue('event-start-time', response.eventStartTime);
-    setValue('guest-arrival-time', response.guestArrivalTime);
     setValue('main-program-time', response.mainProgramTime);
     setValue('setup-access-time', response.setupAccessTime);
     setValue('contact-name', response.contactName);
     setValue('contact-phone', response.contactPhone);
-    setValue('guest-count', response.guestCount || '');
     setValue('venue-address', response.venueAddress || currentFormData?.event?.venue);
-    setValue('maps-link', response.mapsLink);
     setValue('schedule-notes', response.scheduleNotes);
     setValue('special-instructions', response.specialInstructions);
 }
@@ -70,14 +67,11 @@ function collectResponse() {
     return {
         session: document.querySelector('input[name="session"]:checked')?.value || '',
         eventStartTime: byId('event-start-time').value,
-        guestArrivalTime: byId('guest-arrival-time').value,
         mainProgramTime: byId('main-program-time').value,
         setupAccessTime: byId('setup-access-time').value,
         contactName: byId('contact-name').value.trim(),
         contactPhone: byId('contact-phone').value.trim(),
-        guestCount: byId('guest-count').value,
         venueAddress: byId('venue-address').value.trim(),
-        mapsLink: byId('maps-link').value.trim(),
         scheduleNotes: byId('schedule-notes').value.trim(),
         specialInstructions: byId('special-instructions').value.trim()
     };
