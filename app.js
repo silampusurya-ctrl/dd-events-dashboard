@@ -5124,21 +5124,67 @@ function openCustomerWhatsApp(eventId, type) {
 }
 
 function buildBookingWelcomeMessage(event) {
-    return `*WELCOME TO DD EVENTS*
+    return `*EVENT BOOKING CONFIRMED - DD EVENTS*
 -------------------------------
 Hi *${event.clientName || 'Customer'}*,
 
-Your booking is confirmed. Welcome to the DD Events family!
+Thank you for choosing DD Events. Your event booking is confirmed!
 
 *Service:* ${event.serviceType || '-'}
 *Event Date:* ${formatDisplayDate(event.eventDate) || '-'}
 *Venue:* ${event.venue || '-'}
+*Booking Reference:* ${getBookingConfirmationNumber(event)}
 
-We are happy to be part of your special event. Our team will keep you updated as the event date approaches.
+We are delighted to be part of your special occasion. Our team will contact you for the final timing and execution details.
 
 For any questions, call 6374503310 or 6384203310.
 
-Thank you for choosing DD Events!`;
+With thanks,
+*DD Events (Events & Management)*`;
+}
+
+function getBookingConfirmationNumber(event) {
+    const explicitReference = String(event?.bookingReference || '').trim();
+    if (explicitReference) return explicitReference;
+    const id = String(event?.id || '');
+    const digits = id.replace(/\D/g, '');
+    const suffix = digits.slice(-6) || id.replace(/[^a-z0-9]/gi, '').slice(-6).toUpperCase() || 'BOOKED';
+    return `DDE-${suffix}`;
+}
+
+function prepareBookingConfirmationImage(event) {
+    if (!event) return false;
+    const values = {
+        'booking-confirmation-customer': event.clientName || 'Valued Customer',
+        'booking-confirmation-service': event.serviceType || 'Event Service',
+        'booking-confirmation-date': formatDisplayDate(event.eventDate) || 'Date to be confirmed',
+        'booking-confirmation-venue': event.venue || 'Venue to be confirmed',
+        'booking-confirmation-reference': getBookingConfirmationNumber(event)
+    };
+    Object.entries(values).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    });
+    return true;
+}
+
+async function shareBookingConfirmationImage(eventId) {
+    const event = appState.events.find(item => String(item.id) === String(eventId));
+    if (!event) {
+        showToast('Customer record not found.');
+        return false;
+    }
+    if (getStageIndex(event.status) < getStageIndex('advance-paid')) {
+        showToast('Confirmation image is available after Advance Pay / Date Booked.');
+        return false;
+    }
+    prepareBookingConfirmationImage(event);
+    await shareElementAsJPEG(
+        'booking-confirmation-image',
+        `Booking-Confirmation-${getBookingConfirmationNumber(event)}.jpg`,
+        'DD Events Booking Confirmation'
+    );
+    return true;
 }
 
 function buildEventThankYouMessage(event) {
@@ -5212,6 +5258,14 @@ async function shareCustomerDocumentImage(eventId, type) {
         showToast('Bill image is available after Advance Pay / Date Booked.');
         return false;
     }
+    if (type === 'booking-confirmation') {
+        if (getStageIndex(event.status) < getStageIndex('advance-paid')) {
+            showToast('Confirmation image is available after Advance Pay / Date Booked.');
+            return false;
+        }
+        closeModal('whatsapp-center-modal');
+        return shareBookingConfirmationImage(event.id);
+    }
 
     closeModal('whatsapp-center-modal');
     if (type === 'quotation') {
@@ -5247,6 +5301,7 @@ function renderWhatsAppCenter() {
         const stageIndex = Number(event.stageIndex || 0);
         const invoiceReady = stageIndex >= 2;
         const bookingWelcomeReady = hasPhone && stageIndex >= 2;
+        const bookingConfirmationImageReady = stageIndex >= 2;
         const eventThanksReady = hasPhone && stageIndex >= 4;
         const feedbackReady = hasPhone && stageIndex >= 4 && Boolean(getGoogleReviewUrl());
         const paymentCalcs = getEventInvoiceCalculations(event);
@@ -5269,7 +5324,8 @@ function renderWhatsAppCenter() {
                     <button type="button" class="whatsapp-action-btn image" onclick="shareCustomerDocumentImage(${eventArgument}, 'invoice')"${invoiceReady ? '' : ' disabled'} title="${invoiceReady ? 'Share bill as a JPEG image' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-file-image"></i> Bill Image</button>
                 </div></div>
                 <div class="whatsapp-action-group"><span>Customer Messages</span><div>
-                    <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'booking-welcome')"${bookingWelcomeReady ? '' : ' disabled'} title="${stageIndex >= 2 ? 'Send booking confirmation and welcome' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-handshake"></i> Booking Welcome</button>
+                    <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'booking-welcome')"${bookingWelcomeReady ? '' : ' disabled'} title="${stageIndex >= 2 ? 'Send booking confirmation text to the customer' : 'Available after Advance Pay / Date Booked'}"><i class="fa-brands fa-whatsapp"></i> Confirmation Text</button>
+                    <button type="button" class="whatsapp-action-btn confirmation-image" onclick="shareCustomerDocumentImage(${eventArgument}, 'booking-confirmation')"${bookingConfirmationImageReady ? '' : ' disabled'} title="${stageIndex >= 2 ? 'Share a personalised booking confirmation image' : 'Available after Advance Pay / Date Booked'}"><i class="fa-solid fa-image"></i> Confirmation Image</button>
                     <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'event-thanks')"${eventThanksReady ? '' : ' disabled'} title="${stageIndex >= 4 ? 'Thank the customer after event execution' : 'Available after Event Execution'}"><i class="fa-solid fa-heart"></i> Event Thank You</button>
                     <button type="button" class="whatsapp-action-btn message" onclick="openCustomerWhatsApp(${eventArgument}, 'payment-thanks')"${paymentThanksReady ? '' : ' disabled'} title="${stageIndex < 5 ? 'Available at Completed Bill' : paymentCalcs.pendingBalance > 0 ? 'Full payment must be recorded first' : 'Confirm full payment and thank the customer'}"><i class="fa-solid fa-circle-check"></i> Payment Thank You</button>
                     <button type="button" class="whatsapp-action-btn review" onclick="openCustomerWhatsApp(${eventArgument}, 'feedback-review')"${feedbackReady ? '' : ' disabled'} title="${stageIndex < 4 ? 'Available after Event Execution is completed' : !getGoogleReviewUrl() ? 'Add Google Review link in Settings' : 'Ask for feedback and a Google review'}"><i class="fa-brands fa-google"></i> Feedback / Review</button>
@@ -6300,6 +6356,13 @@ function renderPipelineStage(stageKey) {
                 <button onclick="event.stopPropagation(); startBillingForEvent('${evt.id}')" title="Invoicing"><i class="fa-solid fa-file-invoice-dollar"></i></button>
             </div>
             ${stageKey === 'advance-paid' ? `
+            <div class="booking-confirmation-actions no-print">
+                <span><i class="fa-solid fa-circle-check"></i> Customer confirmation</span>
+                <div>
+                    <button type="button" onclick="event.stopPropagation(); openCustomerWhatsApp('${evt.id}', 'booking-welcome')"><i class="fa-brands fa-whatsapp"></i> Send Text</button>
+                    <button type="button" onclick="event.stopPropagation(); shareBookingConfirmationImage('${evt.id}')"><i class="fa-solid fa-image"></i> Share Image</button>
+                </div>
+            </div>
             <button class="btn btn-block kanban-documents-btn no-print" onclick="event.stopPropagation(); openEventDocuments('${evt.id}')">
                 <i class="fa-solid fa-folder-open"></i> Documents${documentCount ? ` (${documentCount})` : ''}
             </button>` : ''}

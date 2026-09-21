@@ -868,8 +868,48 @@ textarea:focus {
 .whatsapp-action-btn.primary { background: #128c4f; border-color: #128c4f; color: #fff; }
 .whatsapp-action-btn.image { background: #f4edff; border-color: #d7bdf2; color: #6f2da8; }
 .whatsapp-action-btn.message { background: #fff8e8; border-color: #efd89c; color: #8a5a00; }
+.whatsapp-action-btn.confirmation-image { background:#f4edff; border-color:#d7bdf2; color:#6f2da8; }
 .whatsapp-action-btn.review { background: #eef7ff; border-color: #b9d8f3; color: #1769aa; }
 .whatsapp-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.booking-confirmation-image {
+    position:fixed;
+    left:-12000px;
+    top:0;
+    z-index:-1;
+    box-sizing:border-box;
+    width:1080px;
+    height:1080px;
+    overflow:hidden;
+    padding:72px 82px 64px;
+    color:#25003f;
+    background:linear-gradient(145deg,#fff 0%,#fffaf0 46%,#f4e8ff 100%);
+    font-family:Georgia,'Times New Roman',serif;
+}
+.booking-confirmation-image::before { content:''; position:absolute; inset:25px; border:3px solid rgba(123,44,191,.28); border-radius:40px; }
+.booking-confirmation-orbit { position:absolute; border-radius:50%; background:linear-gradient(135deg,#7b2cbf,#b54fe0); opacity:.12; }
+.booking-confirmation-orbit.orbit-one { width:420px; height:420px; right:-130px; top:-130px; }
+.booking-confirmation-orbit.orbit-two { width:300px; height:300px; left:-120px; bottom:-100px; background:linear-gradient(135deg,#f3b900,#ffdf70); }
+.booking-confirmation-brand { position:relative; display:flex; align-items:center; gap:22px; }
+.booking-confirmation-logo { display:grid; place-items:center; width:92px; height:92px; border-radius:25px; color:#fff; background:linear-gradient(135deg,#671ba6,#9d42d5); font-family:Arial,sans-serif; font-size:36px; font-weight:900; box-shadow:0 14px 32px rgba(98,26,157,.25); }
+.booking-confirmation-brand div { display:flex; flex-direction:column; gap:5px; }
+.booking-confirmation-brand strong { font-size:38px; letter-spacing:.02em; }
+.booking-confirmation-brand small { color:#7c608d; font-family:Arial,sans-serif; font-size:20px; letter-spacing:.16em; text-transform:uppercase; }
+.booking-confirmation-check { position:relative; display:grid; place-items:center; width:116px; height:116px; margin:62px auto 28px; border:8px solid #f3b900; border-radius:50%; color:#fff; background:#7b2cbf; font-family:Arial,sans-serif; font-size:66px; font-weight:900; box-shadow:0 16px 38px rgba(123,44,191,.22); }
+.booking-confirmation-kicker { position:relative; margin:0 0 18px; color:#8b5d00; font-family:Arial,sans-serif; font-size:21px; font-weight:800; letter-spacing:.19em; text-align:center; }
+.booking-confirmation-image h2 { position:relative; margin:0; font-size:63px; line-height:1.03; letter-spacing:.025em; text-align:center; }
+.booking-confirmation-image h2 span { color:#7b2cbf; }
+.booking-confirmation-greeting { position:relative; max-width:760px; margin:28px auto 34px; color:#604b6b; font-family:Arial,sans-serif; font-size:24px; line-height:1.5; text-align:center; }
+.booking-confirmation-greeting strong { color:#25003f; }
+.booking-confirmation-details { position:relative; display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.booking-confirmation-details div { display:flex; min-height:98px; box-sizing:border-box; flex-direction:column; justify-content:center; gap:8px; padding:18px 24px; border:1px solid rgba(123,44,191,.18); border-radius:18px; background:rgba(255,255,255,.8); }
+.booking-confirmation-details .wide { grid-column:1 / -1; }
+.booking-confirmation-details small { color:#8a6e98; font-family:Arial,sans-serif; font-size:15px; font-weight:800; letter-spacing:.14em; }
+.booking-confirmation-details strong { overflow-wrap:anywhere; font-size:25px; }
+.booking-confirmation-footer { position:relative; display:grid; grid-template-columns:1fr auto; align-items:center; margin-top:31px; padding-top:25px; border-top:2px solid rgba(123,44,191,.16); font-family:Arial,sans-serif; }
+.booking-confirmation-footer span { color:#7c608d; font-size:17px; font-weight:700; text-transform:uppercase; }
+.booking-confirmation-footer > strong { color:#7b2cbf; font-size:23px; }
+.booking-confirmation-footer p { grid-column:1 / -1; margin:18px 0 0; color:#604b6b; font-size:18px; text-align:center; }
 
 /* Notification Bell Dropdown */
 .notification-bell {
@@ -1481,6 +1521,13 @@ textarea:focus {
     background: #d98200;
     transform: translateY(-1px);
 }
+
+.booking-confirmation-actions { margin-top:10px; padding:10px; border:1px solid rgba(18,140,79,.24); border-radius:9px; background:#f0faf5; }
+.booking-confirmation-actions > span { display:block; margin-bottom:8px; color:#126d40; font-size:.75rem; font-weight:800; }
+.booking-confirmation-actions > div { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.booking-confirmation-actions button { border:1px solid #b8dfc9; border-radius:7px; padding:7px 5px; color:#126d40; background:#fff; font:inherit; font-size:.72rem; font-weight:800; cursor:pointer; }
+.booking-confirmation-actions button:first-child { color:#fff; border-color:#128c4f; background:#128c4f; }
+.booking-confirmation-actions button:hover { transform:translateY(-1px); box-shadow:0 4px 10px rgba(18,140,79,.14); }
 
 .kanban-expenses-btn {
     margin-top: 8px;

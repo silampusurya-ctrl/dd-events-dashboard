@@ -428,7 +428,8 @@ test('WhatsApp Center filters customers, escapes content and disables missing ph
     assert.equal((html.match(/ disabled/g) || []).length, 7);
     assert.ok(html.includes('Quote Image'));
     assert.ok(html.includes('Bill Image'));
-    assert.ok(html.includes('Booking Welcome'));
+    assert.ok(html.includes('Confirmation Text'));
+    assert.ok(html.includes('Confirmation Image'));
     assert.ok(html.includes('Event Thank You'));
     assert.ok(html.includes('Payment Thank You'));
     assert.ok(html.includes('Feedback / Review'));
@@ -461,6 +462,33 @@ test('WhatsApp Center prepares the selected quotation and bill as JPEG images', 
     ]);
 });
 
+test('booking confirmation fills the customer image and shares it only after booking', async () => {
+    const { context: c, run, element } = setup();
+    c.confirmationEvents = [
+        financeEvent('1783414026134', 2, 1000, [{ method: 'Advance', amount: 200 }], {
+            clientName: 'Nila', serviceType: 'Wedding Photography', eventDate: '2026-11-14', venue: 'Lotus Hall'
+        }),
+        financeEvent('early', 1, 1000, [], { clientName: 'Early Customer' })
+    ];
+    run("appState.events=confirmationEvents; imageCalls=[]; shareElementAsJPEG=async (...args)=>imageCalls.push(args); toastMessages=[]; showToast=message=>toastMessages.push(message);");
+
+    assert.equal(c.prepareBookingConfirmationImage(run('appState.events[0]')), true);
+    assert.equal(element('booking-confirmation-customer').textContent, 'Nila');
+    assert.equal(element('booking-confirmation-service').textContent, 'Wedding Photography');
+    assert.equal(element('booking-confirmation-date').textContent, '14 Nov 2026');
+    assert.equal(element('booking-confirmation-venue').textContent, 'Lotus Hall');
+    assert.equal(element('booking-confirmation-reference').textContent, 'DDE-026134');
+
+    assert.equal(await c.shareBookingConfirmationImage(run('appState.events[0].id')), true);
+    assert.deepEqual(JSON.parse(JSON.stringify(run('imageCalls[0]'))), [
+        'booking-confirmation-image',
+        'Booking-Confirmation-DDE-026134.jpg',
+        'DD Events Booking Confirmation'
+    ]);
+    assert.equal(await c.shareBookingConfirmationImage(run('appState.events[1].id')), false);
+    assert.ok(run('toastMessages[0]').includes('after Advance Pay'));
+});
+
 test('bill image is blocked before Advance Pay while quotation image remains available', async () => {
     const { context: c, run } = setup();
     run("appState.events=[{id:'evt_1783414026134',clientName:'Test',stageIndex:1,status:'quotation'}]; showToast=()=>{}; shareElementAsJPEG=async()=>{throw new Error('Must not share');};");
@@ -478,10 +506,12 @@ test('stage messages include the customer and open only at the correct workflow 
 
     assert.equal(c.openCustomerWhatsApp(run('appState.events[0].id'), 'booking-welcome'), true);
     let text = new URL(c.window.lastOpen).searchParams.get('text');
-    assert.ok(text.startsWith('*WELCOME TO DD EVENTS*'));
+    assert.ok(text.startsWith('*EVENT BOOKING CONFIRMED - DD EVENTS*'));
     assert.ok(text.includes('Welcome Customer'));
     assert.ok(text.includes('10 Sep 2026'));
     assert.ok(text.includes('Welcome Hall'));
+    assert.ok(text.includes('Thank you for choosing DD Events'));
+    assert.ok(text.includes('*Booking Reference:*'));
 
     assert.equal(c.openCustomerWhatsApp(run('appState.events[1].id'), 'event-thanks'), true);
     text = new URL(c.window.lastOpen).searchParams.get('text');
